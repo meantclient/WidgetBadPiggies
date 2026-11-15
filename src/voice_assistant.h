@@ -32,4 +32,5 @@ private:
     ISpRecoContext* pRecoCtx_ = NULL;
     ISpRecoGrammar* pGrammar_ = NULL;
     ISpRecognizer* pInprocRec_ = NULL;
+    ISpAudio* pAudio_ = NULL;
 };

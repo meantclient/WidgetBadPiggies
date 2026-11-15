@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "PATH=C:\Windows\System32;C:\Windows;%PATH%"
 taskkill /f /im BadPiggiesDotaWidget.exe 2>nul
 echo ========================================================
 echo   Building Bad Piggies Dota 2 Widget (C++)

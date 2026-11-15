@@ -39,6 +39,11 @@ void VoiceAssistant::Stop() {
     if (!running_.load()) return;
     running_.store(false);
 
+    if (pAudio_) {
+        pAudio_->SetState(SPAS_STOP, 0);
+        pAudio_->Release();
+        pAudio_ = NULL;
+    }
     if (pGrammar_) {
         pGrammar_->SetGrammarState(SPGS_DISABLED);
         pGrammar_->Release();
@@ -65,19 +70,25 @@ bool VoiceAssistant::IsAwake() const {
 void VoiceAssistant::ListeningThread() {
     CoInitialize(NULL);
 
-    // 1. Try Shared Recognizer first
-    HRESULT hr = CoCreateInstance(CLSID_SpSharedRecoContext, NULL, CLSCTX_ALL, IID_ISpRecoContext, (void**)&pRecoCtx_);
-    
-    // 2. If Shared Recognizer failed, fallback to Inproc Recognizer with default microphone
-    if (FAILED(hr) || !pRecoCtx_) {
-        hr = CoCreateInstance(CLSID_SpInprocRecognizer, NULL, CLSCTX_ALL, IID_ISpRecognizer, (void**)&pInprocRec_);
-        if (SUCCEEDED(hr) && pInprocRec_) {
-            pInprocRec_->SetInput(NULL, TRUE); // Default mic
-            hr = pInprocRec_->CreateRecoContext(&pRecoCtx_);
+    // 1. Create Inproc Recognizer and Audio Input directly from sound card
+    HRESULT hr = CoCreateInstance(CLSID_SpInprocRecognizer, NULL, CLSCTX_ALL, IID_ISpRecognizer, (void**)&pInprocRec_);
+    if (SUCCEEDED(hr) && pInprocRec_) {
+        HRESULT hrAudio = CoCreateInstance(CLSID_SpMMAudioIn, NULL, CLSCTX_ALL, IID_ISpAudio, (void**)&pAudio_);
+        if (SUCCEEDED(hrAudio) && pAudio_) {
+            pAudio_->SetState(SPAS_RUN, 0);
+            pInprocRec_->SetInput(pAudio_, TRUE);
+        } else {
+            pInprocRec_->SetInput(NULL, TRUE);
         }
+        pInprocRec_->CreateRecoContext(&pRecoCtx_);
     }
 
-    if (FAILED(hr) || !pRecoCtx_) {
+    // 2. If Inproc Recognizer failed, fallback to Shared Context
+    if (!pRecoCtx_) {
+        hr = CoCreateInstance(CLSID_SpSharedRecoContext, NULL, CLSCTX_ALL, IID_ISpRecoContext, (void**)&pRecoCtx_);
+    }
+
+    if (!pRecoCtx_) {
         CoUninitialize();
         return;
     }
@@ -90,7 +101,7 @@ void VoiceAssistant::ListeningThread() {
         return;
     }
 
-    // 3. Try loading dictation topic
+    // 3. Load dictation topic for broad listening
     hr = pGrammar_->LoadDictation(NULL, SPLO_STATIC);
     if (SUCCEEDED(hr)) {
         pGrammar_->SetDictationState(SPRS_ACTIVE);
@@ -172,24 +183,28 @@ void VoiceAssistant::ListeningThread() {
         pGrammar_->SetRuleState(L"PigVoiceCommands", NULL, SPRS_ACTIVE);
     }
 
-    pRecoCtx_->SetInterest(SPFEI(SPEI_RECOGNITION) | SPFEI(SPEI_HYPOTHESIS), SPFEI(SPEI_RECOGNITION) | SPFEI(SPEI_HYPOTHESIS));
+    // Set interest for both high-confidence and hypothesis/false recognition (to catch accented speech!)
+    pRecoCtx_->SetInterest(
+        SPFEI(SPEI_RECOGNITION) | SPFEI(SPEI_FALSE_RECOGNITION) | SPFEI(SPEI_HYPOTHESIS),
+        SPFEI(SPEI_RECOGNITION) | SPFEI(SPEI_FALSE_RECOGNITION) | SPFEI(SPEI_HYPOTHESIS)
+    );
     pRecoCtx_->Resume(0);
 
     HANDLE hEvent = pRecoCtx_->GetNotifyEventHandle();
 
     while (running_.load()) {
         if (hEvent != NULL) {
-            DWORD waitRes = WaitForSingleObject(hEvent, 250);
+            DWORD waitRes = WaitForSingleObject(hEvent, 150);
             if (waitRes == WAIT_OBJECT_0) {
                 SPEVENT spEvent;
                 ULONG fetched = 0;
                 while (pRecoCtx_->GetEvents(1, &spEvent, &fetched) == S_OK && fetched > 0) {
-                    if (spEvent.eEventId == SPEI_RECOGNITION) {
+                    if (spEvent.eEventId == SPEI_RECOGNITION || spEvent.eEventId == SPEI_FALSE_RECOGNITION) {
                         ISpRecoResult* pResult = reinterpret_cast<ISpRecoResult*>(spEvent.lParam);
                         if (pResult) {
                             WCHAR* pwszText = NULL;
                             if (SUCCEEDED(pResult->GetText(SP_GETWHOLEPHRASE, SP_GETWHOLEPHRASE, TRUE, &pwszText, NULL))) {
-                                if (pwszText) {
+                                if (pwszText && wcslen(pwszText) > 0) {
                                     ProcessRecognizedText(pwszText);
                                     CoTaskMemFree(pwszText);
                                 }
@@ -199,7 +214,7 @@ void VoiceAssistant::ListeningThread() {
                 }
             }
         } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
         }
     }
 
@@ -224,13 +239,16 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
     std::wstring text = rawText;
     for (auto& ch : text) ch = (wchar_t)towlower(ch);
 
+    static DWORD s_lastTriggerTick = 0;
+    DWORD nowTick = GetTickCount();
+
     auto now = std::chrono::steady_clock::now();
     bool isAwakeWindow = (now < awakeUntil_);
 
     std::wstring wakeWord = ConfigManager::Get().assistantWakeWord;
     for (auto& ch : wakeWord) ch = (wchar_t)towlower(ch);
 
-    // 1. Check Wake Word presence
+    // 1. Check Wake Word presence (Russian, English, and phonetic transliterations)
     bool hasWakeWord = false;
     if (!wakeWord.empty() && text.find(wakeWord) != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"свин") != std::wstring::npos) hasWakeWord = true;
@@ -256,11 +274,16 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"анекдот") != std::wstring::npos ||
         text.find(L"как дела") != std::wstring::npos ||
         text.find(L"здарова") != std::wstring::npos ||
-        text.find(L"красава") != std::wstring::npos) {
+        text.find(L"красава") != std::wstring::npos ||
+        text.find(L"buy") != std::wstring::npos ||
+        text.find(L"joke") != std::wstring::npos) {
         canProceed = true;
     }
 
     if (!canProceed) return;
+
+    // Debounce triggers so rapid speech doesn't duplicate responses
+    if (nowTick - s_lastTriggerTick < 1600) return;
 
     // Refresh active listening window for 10 seconds!
     awakeUntil_ = now + std::chrono::seconds(10);
@@ -270,6 +293,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"пожестче") != std::wstring::npos ||
         text.find(L"прожар") != std::wstring::npos ||
         text.find(L"toxic") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         ConfigManager::Get().enableToxicMode = true;
         ConfigManager::Save();
         OverlayWindow::Instance().Show(true);
@@ -280,6 +304,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"спокойн") != std::wstring::npos ||
         text.find(L"хватит") != std::wstring::npos ||
         text.find(L"добр") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         ConfigManager::Get().enableToxicMode = false;
         ConfigManager::Save();
         OverlayWindow::Instance().Show(true);
@@ -297,6 +322,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"joke") != std::wstring::npos ||
         text.find(L"funny") != std::wstring::npos ||
         text.find(L"shoot") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         OverlayWindow::Instance().Show(true);
         OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetJoke());
         return;
@@ -312,6 +338,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"whats up") != std::wstring::npos ||
         text.find(L"kak dela") != std::wstring::npos ||
         text.find(L"cock dela") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         OverlayWindow::Instance().Show(true);
         OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetHowAreYou());
         return;
@@ -329,6 +356,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"hi") != std::wstring::npos ||
         text.find(L"rover") != std::wstring::npos ||
         text.find(L"starova") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         OverlayWindow::Instance().Show(true);
         OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetFriendlyChat());
         return;
@@ -344,6 +372,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"thanks") != std::wstring::npos ||
         text.find(L"thank you") != std::wstring::npos ||
         text.find(L"good job") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         OverlayWindow::Instance().Show(true);
         OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetThanksReaction());
         return;
@@ -356,6 +385,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"тильт") != std::wstring::npos ||
         text.find(L"раки") != std::wstring::npos ||
         text.find(L"нубы") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         OverlayWindow::Instance().Show(true);
         OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetCheerUp());
         return;
@@ -368,6 +398,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"шмот") != std::wstring::npos ||
         text.find(L"айтем") != std::wstring::npos ||
         text.find(L"buy") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         AskAdvice(0); // Buy
         return;
     }
@@ -379,12 +410,14 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"способност") != std::wstring::npos ||
         text.find(L"прокачк") != std::wstring::npos ||
         text.find(L"skill") != std::wstring::npos) {
+        s_lastTriggerTick = nowTick;
         AskAdvice(1); // Skill
         return;
     }
 
     // Intent 9: Wake word alone ("Свин!" / "Пиг!")
     if (hasWakeWord) {
+        s_lastTriggerTick = nowTick;
         OverlayWindow::Instance().Show(true);
         OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetWakePrompt());
         return;
