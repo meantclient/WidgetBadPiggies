@@ -36,7 +36,7 @@ struct AppConfig {
     // Auto-update
     bool autoUpdate = true;
     std::string appVersion = "2.4";
-    std::string updateUrl = "https://raw.githubusercontent.com/WidgetBadPiggies/update/main/version.json";
+    std::string updateUrl = "https://raw.githubusercontent.com/meantclient/WidgetBadPiggies/main/version.json";
 };
 
 class ConfigManager {

@@ -45,7 +45,7 @@ def update_files_version(new_ver, changelog):
     # 3. Update version.json
     v_data = {
         "version": new_ver,
-        "download_url": "https://raw.githubusercontent.com/MaksimGeraskin/WidgetBadPiggies/main/BadPiggiesSetup.exe",
+        "download_url": "https://raw.githubusercontent.com/meantclient/WidgetBadPiggies/main/BadPiggiesSetup.exe",
         "changelog": changelog
     }
     with open(VERSION_JSON, "w", encoding="utf-8") as f:
@@ -104,7 +104,7 @@ def handle_git(new_ver, changelog):
     else:
         print("  -> Note: Git remote 'origin' is not set yet.")
         print("     To connect GitHub:")
-        print("     git remote add origin https://github.com/MaksimGeraskin/WidgetBadPiggies.git")
+        print("     git remote add origin https://github.com/meantclient/WidgetBadPiggies.git")
         print("     git push -u origin main")
 
 def main():

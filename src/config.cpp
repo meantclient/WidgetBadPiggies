@@ -110,7 +110,7 @@ void ConfigManager::Load() {
     g_config.appVersion = WStringToUtf8(verBuf);
 
     wchar_t urlBuf[512] = { 0 };
-    GetPrivateProfileStringW(L"Settings", L"update_url", L"https://raw.githubusercontent.com/MaksimGeraskin/WidgetBadPiggies/main/version.json", urlBuf, 512, iniPath.c_str());
+    GetPrivateProfileStringW(L"Settings", L"update_url", L"https://raw.githubusercontent.com/meantclient/WidgetBadPiggies/main/version.json", urlBuf, 512, iniPath.c_str());
     g_config.updateUrl = WStringToUtf8(urlBuf);
 
     ApplyAudioVolume();
