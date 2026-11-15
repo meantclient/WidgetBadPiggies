@@ -16,6 +16,7 @@ public:
     void AskAdvice(int queryType = 0); // 0 = Buy, 1 = Skill, 2 = General
 
     bool IsRunning() const { return running_.load(); }
+    bool IsAwake() const;
 
 private:
     VoiceAssistant();
@@ -26,6 +27,7 @@ private:
 
     std::atomic<bool> running_{ false };
     std::thread listenThread_;
+    std::chrono::steady_clock::time_point awakeUntil_{};
 
     ISpRecoContext* pRecoCtx_ = NULL;
     ISpRecoGrammar* pGrammar_ = NULL;

@@ -1,5 +1,5 @@
 {
-  "version": "2.4",
+  "version": "2.5",
   "download_url": "https://raw.githubusercontent.com/meantclient/WidgetBadPiggies/main/BadPiggiesSetup.exe",
-  "changelog": "Версия 2.4: Новый мета-мозг Dota2ProTracker, живая человеческая озвучка (Ирина и Павел OneCore), режим токсичной прожарки, горячие клавиши F5 (поболтать), F6 (закуп) и F7 (скиллы)."
+  "changelog": "Голосовой помощник: свободные руки, живой диалог, дотерские шутки, кнопка F8"
 }

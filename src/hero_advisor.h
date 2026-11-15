@@ -42,6 +42,11 @@ public:
     std::wstring GetSkillAdvice();
     std::wstring GetGeneralAdvice();
     std::wstring GetFriendlyChat();
+    std::wstring GetJoke();
+    std::wstring GetHowAreYou();
+    std::wstring GetThanksReaction();
+    std::wstring GetCheerUp();
+    std::wstring GetWakePrompt();
 
     // Event commentary
     std::wstring GetDeathRoast();

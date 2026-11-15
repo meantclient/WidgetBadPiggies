@@ -462,6 +462,14 @@ void OverlayWindow::OnTimer() {
     }
     lastF7State = f7Down;
 
+    static bool lastF8State = false;
+    bool f8Down = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+    if (f8Down && !lastF8State) {
+        OverlayWindow::Instance().Show(true);
+        OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetJoke()); // Joke
+    }
+    lastF8State = f8Down;
+
     // 3. Periodic Topmost & Dota visibility enforcement
     static int pollCounter = 0;
     if (++pollCounter >= 25) { // every ~400ms

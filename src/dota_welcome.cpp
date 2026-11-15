@@ -203,7 +203,7 @@ void DotaWelcomeOverlay::Render(HDC hdc) {
 
     g.DrawString(L"ОБЯЗАТЕЛЬНЫЙ РЕЖИМ ВИДЕО", -1, &titleFont, PointF(205.0f, (float)(card3Y + 14)), &goldBrush);
     g.DrawString(L"В настройках видео Доты выберите: «В окне без рамки» (Borderless Window).", -1, &textFont, PointF(35.0f, (float)(card3Y + 44)), &whiteBrush);
-    g.DrawString(L"Клавиши в игре: F5 — Поболтать с братухой | F6 — Что купить? | F7 — Что качать?", -1, &hintFont, PointF(35.0f, (float)(card3Y + 64)), &goldDim);
+    g.DrawString(L"Клавиши: F5 — Поболтать | F6 — Что купить? | F7 — Что качать? | F8 — Анекдот", -1, &hintFont, PointF(35.0f, (float)(card3Y + 64)), &goldDim);
 
     // --- Button: «ПРИНИМАЮ!» (Authentic Dota 2 Accept Match button) ---
     int btnW = 280;
