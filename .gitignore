@@ -1,0 +1,6 @@
+*.obj
+*.res
+*.bin
+out.txt
+test_sapi.exe
+gsi_log.txt
