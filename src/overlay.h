@@ -26,6 +26,9 @@ public:
     void TriggerAdvice(const std::wstring& advice);
     void ReloadSkinAndSize();
 
+    void SetDynamicIslandMode(bool enable);
+    bool IsDynamicIslandMode() const { return isDynamicIsland_; }
+
     HWND GetHwnd() const { return hwnd_; }
 
 private:
@@ -51,8 +54,8 @@ private:
     std::wstring customFontName_ = L"";
 
     // Dimensions
-    int winWidth_ = 320;
-    int winHeight_ = 340;
+    int winWidth_ = 420;
+    int winHeight_ = 380;
     int posX_ = 0;
     int posY_ = 0;
 
@@ -60,6 +63,15 @@ private:
     bool isDragging_ = false;
     POINT dragStartMouse_ = { 0, 0 };
     POINT dragStartPos_ = { 0, 0 };
+
+    // Dynamic Island State
+    bool isDynamicIsland_ = false;
+    float islandCurrentWidth_ = 220.0f;
+    float islandTargetWidth_ = 220.0f;
+    float islandCurrentHeight_ = 38.0f;
+    float islandTargetHeight_ = 38.0f;
+    int savedPigX_ = -1;
+    int savedPigY_ = -1;
 
     // Animation state
     PigAnimationState state_ = PigAnimationState::IDLE;

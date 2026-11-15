@@ -92,7 +92,7 @@ bool SettingsWindow::Create() {
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
     int winW = 600;
-    int winH = 710;
+    int winH = 760;
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
     int x = (screenW - winW) / 2;
@@ -177,91 +177,101 @@ void SettingsWindow::CreateControls() {
     // Group 3: Options & Assistant
     HWND grpOptions = CreateWindowW(L"BUTTON", L" Параметры и Помощник ",
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        20, 220, 310, 340, hwnd_, NULL, hInst, NULL);
+        20, 215, 310, 420, hwnd_, NULL, hInst, NULL);
     SendMessageW(grpOptions, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
     chkSound_ = CreateWindowW(L"BUTTON", L"Звуковые эффекты (WAV)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 245, 280, 22, hwnd_, (HMENU)IDC_CHK_SOUND, hInst, NULL);
+        35, 238, 280, 20, hwnd_, (HMENU)IDC_CHK_SOUND, hInst, NULL);
     SendMessageW(chkSound_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     chkVoiceTTS_ = CreateWindowW(L"BUTTON", L"Озвучка фраз:",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 270, 115, 22, hwnd_, (HMENU)IDC_CHK_VOICE_TTS, hInst, NULL);
+        35, 260, 115, 20, hwnd_, (HMENU)IDC_CHK_VOICE_TTS, hInst, NULL);
     SendMessageW(chkVoiceTTS_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     comboVoiceGender_ = CreateWindowW(L"COMBOBOX", NULL,
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
-        155, 268, 160, 120, hwnd_, NULL, hInst, NULL);
+        155, 258, 160, 120, hwnd_, NULL, hInst, NULL);
     SendMessageW(comboVoiceGender_, WM_SETFONT, (WPARAM)hFont_, TRUE);
     SendMessageW(comboVoiceGender_, CB_ADDSTRING, 0, (LPARAM)L"Женский (Ирина)");
     SendMessageW(comboVoiceGender_, CB_ADDSTRING, 0, (LPARAM)L"Мужской (Павел)");
 
+    chkPigShadow_ = CreateWindowW(L"BUTTON", L"Объёмная 3D-тень свина",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 283, 280, 20, hwnd_, NULL, hInst, NULL);
+    SendMessageW(chkPigShadow_, WM_SETFONT, (WPARAM)hFont_, TRUE);
+
+    chkDynamicIsland_ = CreateWindowW(L"BUTTON", L"Режим Dynamic Island (вверху)",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 305, 280, 20, hwnd_, NULL, hInst, NULL);
+    SendMessageW(chkDynamicIsland_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+
     chkHide_ = CreateWindowW(L"BUTTON", L"Скрывать с экрана, если Дота закрыта",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 295, 280, 22, hwnd_, (HMENU)IDC_CHK_HIDE, hInst, NULL);
+        35, 328, 280, 20, hwnd_, (HMENU)IDC_CHK_HIDE, hInst, NULL);
     SendMessageW(chkHide_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     chkAutostart_ = CreateWindowW(L"BUTTON", L"Запускать вместе с Windows",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 320, 280, 22, hwnd_, (HMENU)IDC_CHK_AUTOSTART, hInst, NULL);
+        35, 350, 280, 20, hwnd_, (HMENU)IDC_CHK_AUTOSTART, hInst, NULL);
     SendMessageW(chkAutostart_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     chkUseName_ = CreateWindowW(L"BUTTON", L"Обращаться к вам:",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 348, 155, 22, hwnd_, (HMENU)IDC_CHK_USE_NAME, hInst, NULL);
+        35, 375, 155, 20, hwnd_, (HMENU)IDC_CHK_USE_NAME, hInst, NULL);
     SendMessageW(chkUseName_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
     txtPlayerName_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"Марат",
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        195, 347, 120, 24, hwnd_, (HMENU)IDC_TXT_PLAYER_NAME, hInst, NULL);
+        195, 374, 120, 22, hwnd_, (HMENU)IDC_TXT_PLAYER_NAME, hInst, NULL);
     SendMessageW(txtPlayerName_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    HWND lblNameNote = CreateWindowW(L"STATIC", L"(Имя звучит только в «Красава, Марат!»)",
-        WS_CHILD | WS_VISIBLE,
-        35, 374, 280, 16, hwnd_, NULL, hInst, NULL);
-    SendMessageW(lblNameNote, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     // Voice Assistant Controls
     chkVoiceAssistant_ = CreateWindowW(L"BUTTON", L"Голосовой помощник (микрофон)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 396, 280, 22, hwnd_, (HMENU)IDC_CHK_VOICE_ASSISTANT, hInst, NULL);
+        35, 404, 280, 22, hwnd_, (HMENU)IDC_CHK_VOICE_ASSISTANT, hInst, NULL);
     SendMessageW(chkVoiceAssistant_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+
+    HWND lblMic = CreateWindowW(L"STATIC", L"Микрофон:",
+        WS_CHILD | WS_VISIBLE,
+        35, 432, 80, 20, hwnd_, NULL, hInst, NULL);
+    SendMessageW(lblMic, WM_SETFONT, (WPARAM)hFont_, TRUE);
+
+    comboMicrophone_ = CreateWindowW(L"COMBOBOX", NULL,
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+        120, 430, 195, 160, hwnd_, NULL, hInst, NULL);
+    SendMessageW(comboMicrophone_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     HWND lblWake = CreateWindowW(L"STATIC", L"Имя помощника:",
         WS_CHILD | WS_VISIBLE,
-        35, 424, 150, 20, hwnd_, NULL, hInst, NULL);
+        35, 460, 150, 20, hwnd_, NULL, hInst, NULL);
     SendMessageW(lblWake, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     txtWakeWord_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"Свин",
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        195, 422, 120, 24, hwnd_, (HMENU)IDC_TXT_WAKE_WORD, hInst, NULL);
+        195, 458, 120, 22, hwnd_, (HMENU)IDC_TXT_WAKE_WORD, hInst, NULL);
     SendMessageW(txtWakeWord_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    HWND lblWakeNote = CreateWindowW(L"STATIC", L"(«Свин, что купить?», «Пиг» по умолч.)",
-        WS_CHILD | WS_VISIBLE,
-        35, 448, 280, 16, hwnd_, NULL, hInst, NULL);
-    SendMessageW(lblWakeNote, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     chkToxicMode_ = CreateWindowW(L"BUTTON", L"Говорить наравне (токсик / прожарка)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 468, 280, 22, hwnd_, NULL, hInst, NULL);
+        35, 488, 280, 22, hwnd_, NULL, hInst, NULL);
     SendMessageW(chkToxicMode_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
     chkProactiveAdvisor_ = CreateWindowW(L"BUTTON", L"Советы по игре (закуп и скиллы)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 492, 280, 22, hwnd_, (HMENU)IDC_CHK_PROACTIVE_ADVISOR, hInst, NULL);
+        35, 514, 280, 22, hwnd_, (HMENU)IDC_CHK_PROACTIVE_ADVISOR, hInst, NULL);
     SendMessageW(chkProactiveAdvisor_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
     HWND lblAdvNote = CreateWindowW(L"STATIC", L"(Анализ героя, тайминги, инвентарь)",
         WS_CHILD | WS_VISIBLE,
-        35, 516, 280, 16, hwnd_, NULL, hInst, NULL);
+        35, 538, 280, 16, hwnd_, NULL, hInst, NULL);
     SendMessageW(lblAdvNote, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     // Group 4: Testing & Updates
     HWND grpTest = CreateWindowW(L"BUTTON", L" Тестирование и Обновление ",
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        345, 220, 225, 340, hwnd_, NULL, hInst, NULL);
+        345, 215, 225, 420, hwnd_, NULL, hInst, NULL);
     SendMessageW(grpTest, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
     btnTestKill_ = CreateWindowW(L"BUTTON", L"Тест: Килл! (Прыжок)",
@@ -289,26 +299,28 @@ void SettingsWindow::CreateControls() {
         360, 386, 195, 28, hwnd_, (HMENU)IDC_BTN_CHECK_UPDATE, hInst, NULL);
     SendMessageW(btnCheckUpdate_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
-    HWND lblVer = CreateWindowW(L"STATIC", L"Версия: v2.4 (Мозг ProTracker)",
+    std::string vStr = ConfigManager::Get().appVersion;
+    std::wstring verStr = L"Версия: v" + std::wstring(vStr.begin(), vStr.end()) + L" (Dynamic Island & AI)";
+    HWND lblVer = CreateWindowW(L"STATIC", verStr.c_str(),
         WS_CHILD | WS_VISIBLE | SS_CENTER,
-        360, 420, 195, 16, hwnd_, NULL, hInst, NULL);
+        350, 420, 215, 18, hwnd_, NULL, hInst, NULL);
     SendMessageW(lblVer, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     btnSetupDota_ = CreateWindowW(L"BUTTON", L"Обновить CFG Доты",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        360, 442, 195, 30, hwnd_, (HMENU)IDC_BTN_SETUP_DOTA, hInst, NULL);
+        360, 444, 195, 30, hwnd_, (HMENU)IDC_BTN_SETUP_DOTA, hInst, NULL);
     SendMessageW(btnSetupDota_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     // Status Label
     lblStatus_ = CreateWindowW(L"STATIC", L"Статус: поиск Dota 2...",
         WS_CHILD | WS_VISIBLE,
-        25, 575, 545, 22, hwnd_, (HMENU)IDC_LBL_STATUS, hInst, NULL);
+        25, 645, 545, 22, hwnd_, (HMENU)IDC_LBL_STATUS, hInst, NULL);
     SendMessageW(lblStatus_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     // Save button
     btnSave_ = CreateWindowW(L"BUTTON", L"Сохранить и применить",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-        175, 608, 250, 44, hwnd_, (HMENU)IDC_BTN_SAVE, hInst, NULL);
+        175, 672, 250, 44, hwnd_, (HMENU)IDC_BTN_SAVE, hInst, NULL);
     SendMessageW(btnSave_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 }
 
@@ -323,11 +335,26 @@ void SettingsWindow::LoadCurrentSettingsToUI() {
 
     SendMessageW(chkSound_, BM_SETCHECK, cfg.enableSound ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(chkVoiceTTS_, BM_SETCHECK, cfg.enableVoiceTTS ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(chkPigShadow_, BM_SETCHECK, cfg.enablePigShadow ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(chkDynamicIsland_, BM_SETCHECK, cfg.enableDynamicIsland ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(chkHide_, BM_SETCHECK, cfg.hideWhenNoDota ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(chkAutostart_, BM_SETCHECK, cfg.autostart ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(chkUseName_, BM_SETCHECK, cfg.usePlayerName ? BST_CHECKED : BST_UNCHECKED, 0);
     SetWindowTextW(txtPlayerName_, cfg.playerName.c_str());
     EnableWindow(txtPlayerName_, cfg.usePlayerName ? TRUE : FALSE);
+
+    // Microphones list
+    SendMessageW(comboMicrophone_, CB_RESETCONTENT, 0, 0);
+    SendMessageW(comboMicrophone_, CB_ADDSTRING, 0, (LPARAM)L"По умолчанию (Системный)");
+    auto mics = VoiceAssistant::GetAvailableMicrophones();
+    int selMicIdx = 0;
+    for (size_t i = 0; i < mics.size(); ++i) {
+        SendMessageW(comboMicrophone_, CB_ADDSTRING, 0, (LPARAM)mics[i].first.c_str());
+        if (!cfg.microphoneDevice.empty() && (cfg.microphoneDevice == mics[i].first || cfg.microphoneDevice == mics[i].second)) {
+            selMicIdx = (int)i + 1;
+        }
+    }
+    SendMessageW(comboMicrophone_, CB_SETCURSEL, selMicIdx, 0);
 
     SendMessageW(chkVoiceAssistant_, BM_SETCHECK, cfg.enableVoiceAssistant ? BST_CHECKED : BST_UNCHECKED, 0);
     SetWindowTextW(txtWakeWord_, cfg.assistantWakeWord.c_str());
@@ -365,6 +392,14 @@ void SettingsWindow::ApplySettings() {
 
     cfg.enableSound = (SendMessageW(chkSound_, BM_GETCHECK, 0, 0) == BST_CHECKED);
     cfg.enableVoiceTTS = (SendMessageW(chkVoiceTTS_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    cfg.enablePigShadow = (SendMessageW(chkPigShadow_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+    bool oldIsland = cfg.enableDynamicIsland;
+    cfg.enableDynamicIsland = (SendMessageW(chkDynamicIsland_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    if (oldIsland != cfg.enableDynamicIsland) {
+        OverlayWindow::Instance().SetDynamicIslandMode(cfg.enableDynamicIsland);
+    }
+
     cfg.hideWhenNoDota = (SendMessageW(chkHide_, BM_GETCHECK, 0, 0) == BST_CHECKED);
     cfg.autostart = (SendMessageW(chkAutostart_, BM_GETCHECK, 0, 0) == BST_CHECKED);
     cfg.usePlayerName = (SendMessageW(chkUseName_, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -373,6 +408,15 @@ void SettingsWindow::ApplySettings() {
     GetWindowTextW(txtPlayerName_, nameBuf, 128);
     cfg.playerName = nameBuf;
     if (cfg.playerName.empty()) cfg.playerName = L"Марат";
+
+    auto mics = VoiceAssistant::GetAvailableMicrophones();
+    int mSel = (int)SendMessageW(comboMicrophone_, CB_GETCURSEL, 0, 0);
+    std::wstring oldMic = cfg.microphoneDevice;
+    if (mSel <= 0) {
+        cfg.microphoneDevice = L"";
+    } else if (mSel - 1 < (int)mics.size()) {
+        cfg.microphoneDevice = mics[mSel - 1].first;
+    }
 
     bool oldVoice = cfg.enableVoiceAssistant;
     cfg.enableVoiceAssistant = (SendMessageW(chkVoiceAssistant_, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -389,11 +433,10 @@ void SettingsWindow::ApplySettings() {
 
     VoiceService::Instance().ApplyVoiceSettings();
 
-    if (cfg.enableVoiceAssistant != oldVoice) {
+    if ((cfg.enableVoiceAssistant != oldVoice) || (oldMic != cfg.microphoneDevice && cfg.enableVoiceAssistant)) {
+        VoiceAssistant::Instance().Stop();
         if (cfg.enableVoiceAssistant) {
             VoiceAssistant::Instance().Start();
-        } else {
-            VoiceAssistant::Instance().Stop();
         }
     }
 

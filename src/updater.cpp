@@ -97,7 +97,7 @@ bool Updater::CheckForUpdatesSync(bool silent, HWND hNotifyWnd) {
         f.close();
         DeleteFileW(versionFile.c_str());
 
-        std::string remoteVer = j.value("version", "2.4");
+        std::string remoteVer = j.value("version", "3.0");
         std::string currentVer = ConfigManager::Get().appVersion;
         std::string downloadUrl = j.value("download_url", "");
 

@@ -1,5 +1,5 @@
 {
-  "version": "2.6",
+  "version": "3.0",
   "download_url": "https://raw.githubusercontent.com/meantclient/WidgetBadPiggies/main/BadPiggiesSetup.exe",
-  "changelog": "Voice Assistant fix: direct audio token capture, Russian phonetics, 10s awake window and F8 jokes"
+  "changelog": "Grand Update v3.0: Dynamic Island at top edge, 12000+ non-repeating jokes, mic selection, 3D shadow, auto-sized bubbles, smooth dragging, voice deduplication"
 }

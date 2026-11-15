@@ -12,6 +12,9 @@ public:
     bool Start();
     void Stop();
 
+    // Enumerate available microphone devices for settings UI
+    static std::vector<std::pair<std::wstring, std::wstring>> GetAvailableMicrophones();
+
     // Trigger advice programmatically (e.g. from hotkey or UI button)
     void AskAdvice(int queryType = 0); // 0 = Buy, 1 = Skill, 2 = General
 

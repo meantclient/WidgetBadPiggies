@@ -40,6 +40,9 @@ private:
     HWND chkVoiceAssistant_ = NULL;
     HWND txtWakeWord_ = NULL;
     HWND chkProactiveAdvisor_ = NULL;
+    HWND comboMicrophone_ = NULL;
+    HWND chkPigShadow_ = NULL;
+    HWND chkDynamicIsland_ = NULL;
 
     HWND btnTestKill_ = NULL;
     HWND btnTestDeath_ = NULL;

@@ -67,28 +67,85 @@ bool VoiceAssistant::IsAwake() const {
     return (std::chrono::steady_clock::now() < awakeUntil_);
 }
 
+std::vector<std::pair<std::wstring, std::wstring>> VoiceAssistant::GetAvailableMicrophones() {
+    std::vector<std::pair<std::wstring, std::wstring>> result;
+    ISpObjectTokenCategory* pCat = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectTokenCategory, NULL, CLSCTX_ALL, IID_ISpObjectTokenCategory, (void**)&pCat)) && pCat) {
+        if (SUCCEEDED(pCat->SetId(SPCAT_AUDIOIN, FALSE))) {
+            IEnumSpObjectTokens* pEnum = nullptr;
+            if (SUCCEEDED(pCat->EnumTokens(NULL, NULL, &pEnum)) && pEnum) {
+                ISpObjectToken* pToken = nullptr;
+                while (pEnum->Next(1, &pToken, NULL) == S_OK) {
+                    WCHAR* desc = nullptr;
+                    pToken->GetStringValue(NULL, &desc);
+                    WCHAR* pId = nullptr;
+                    pToken->GetId(&pId);
+                    if (desc && pId) {
+                        result.push_back({ std::wstring(desc), std::wstring(pId) });
+                    }
+                    if (desc) CoTaskMemFree(desc);
+                    if (pId) CoTaskMemFree(pId);
+                    pToken->Release();
+                }
+                pEnum->Release();
+            }
+        }
+        pCat->Release();
+    }
+    return result;
+}
+
 void VoiceAssistant::ListeningThread() {
     CoInitialize(NULL);
 
-    // 1. Create Inproc Recognizer and connect default microphone via SPCAT_AUDIOIN token
+    // 1. Create Inproc Recognizer and connect chosen/default microphone via SPCAT_AUDIOIN token
     HRESULT hr = CoCreateInstance(CLSID_SpInprocRecognizer, NULL, CLSCTX_ALL, IID_ISpRecognizer, (void**)&pInprocRec_);
     if (SUCCEEDED(hr) && pInprocRec_) {
         bool audioSet = false;
+        std::wstring targetMic = ConfigManager::Get().microphoneDevice;
+
         ISpObjectTokenCategory* pCat = nullptr;
         if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectTokenCategory, NULL, CLSCTX_ALL, IID_ISpObjectTokenCategory, (void**)&pCat)) && pCat) {
             if (SUCCEEDED(pCat->SetId(SPCAT_AUDIOIN, FALSE))) {
-                WCHAR* defaultId = nullptr;
-                if (SUCCEEDED(pCat->GetDefaultTokenId(&defaultId)) && defaultId) {
-                    ISpObjectToken* pToken = nullptr;
-                    if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectToken, NULL, CLSCTX_ALL, IID_ISpObjectToken, (void**)&pToken)) && pToken) {
-                        if (SUCCEEDED(pToken->SetId(NULL, defaultId, FALSE))) {
-                            if (SUCCEEDED(pInprocRec_->SetInput(pToken, TRUE))) {
-                                audioSet = true;
+                // If a specific microphone device was selected in settings, find and use it
+                if (!targetMic.empty()) {
+                    IEnumSpObjectTokens* pEnum = nullptr;
+                    if (SUCCEEDED(pCat->EnumTokens(NULL, NULL, &pEnum)) && pEnum) {
+                        ISpObjectToken* pToken = nullptr;
+                        while (pEnum->Next(1, &pToken, NULL) == S_OK) {
+                            WCHAR* desc = nullptr;
+                            pToken->GetStringValue(NULL, &desc);
+                            WCHAR* pId = nullptr;
+                            pToken->GetId(&pId);
+                            if ((desc && targetMic == desc) || (pId && targetMic == pId)) {
+                                if (SUCCEEDED(pInprocRec_->SetInput(pToken, TRUE))) {
+                                    audioSet = true;
+                                }
                             }
+                            if (desc) CoTaskMemFree(desc);
+                            if (pId) CoTaskMemFree(pId);
+                            pToken->Release();
+                            if (audioSet) break;
                         }
-                        pToken->Release();
+                        pEnum->Release();
                     }
-                    CoTaskMemFree(defaultId);
+                }
+
+                // Fallback to default system microphone
+                if (!audioSet) {
+                    WCHAR* defaultId = nullptr;
+                    if (SUCCEEDED(pCat->GetDefaultTokenId(&defaultId)) && defaultId) {
+                        ISpObjectToken* pToken = nullptr;
+                        if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectToken, NULL, CLSCTX_ALL, IID_ISpObjectToken, (void**)&pToken)) && pToken) {
+                            if (SUCCEEDED(pToken->SetId(NULL, defaultId, FALSE))) {
+                                if (SUCCEEDED(pInprocRec_->SetInput(pToken, TRUE))) {
+                                    audioSet = true;
+                                }
+                            }
+                            pToken->Release();
+                        }
+                        CoTaskMemFree(defaultId);
+                    }
                 }
             }
             pCat->Release();
@@ -222,6 +279,10 @@ void VoiceAssistant::ListeningThread() {
                 ULONG fetched = 0;
                 while (pRecoCtx_->GetEvents(1, &spEvent, &fetched) == S_OK && fetched > 0) {
                     if (spEvent.eEventId == SPEI_RECOGNITION || spEvent.eEventId == SPEI_FALSE_RECOGNITION) {
+                        // Drop speech input while TTS is actively speaking so pig never hears himself
+                        if (VoiceService::Instance().IsSpeaking()) {
+                            continue;
+                        }
                         ISpRecoResult* pResult = reinterpret_cast<ISpRecoResult*>(spEvent.lParam);
                         if (pResult) {
                             WCHAR* pwszText = NULL;
@@ -262,7 +323,18 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
     for (auto& ch : text) ch = (wchar_t)towlower(ch);
 
     static DWORD s_lastTriggerTick = 0;
+    static DWORD s_lastTtsEndTick = 0;
     DWORD nowTick = GetTickCount();
+
+    // 0. Drop processing if TTS is actively speaking or spoke within last 2.2 seconds!
+    // This stops the pig from listening to his own voice from the speakers and repeating!
+    if (VoiceService::Instance().IsSpeaking()) {
+        s_lastTtsEndTick = nowTick;
+        return;
+    }
+    if (nowTick - s_lastTtsEndTick < 2200) {
+        return;
+    }
 
     auto now = std::chrono::steady_clock::now();
     bool isAwakeWindow = (now < awakeUntil_);
@@ -310,7 +382,8 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
     if (!canProceed) return;
 
     // Debounce triggers so rapid speech doesn't duplicate responses
-    if (nowTick - s_lastTriggerTick < 1600) return;
+    if (nowTick - s_lastTriggerTick < 2600) return;
+    s_lastTtsEndTick = nowTick + 3500;
 
     // Refresh active listening window for 10 seconds!
     awakeUntil_ = now + std::chrono::seconds(10);

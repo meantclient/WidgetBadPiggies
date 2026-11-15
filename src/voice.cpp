@@ -116,6 +116,15 @@ void VoiceService::Speak(const std::wstring& text) {
     }
 }
 
+bool VoiceService::IsSpeaking() const {
+    if (!pVoice_) return false;
+    SPVOICESTATUS status;
+    if (SUCCEEDED(pVoice_->GetStatus(&status, NULL))) {
+        return (status.dwRunningState == SPRS_IS_SPEAKING);
+    }
+    return false;
+}
+
 void VoiceService::Stop() {
     if (pVoice_) {
         pVoice_->Release();

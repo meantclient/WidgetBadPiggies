@@ -9,6 +9,7 @@ public:
     void Init();
     void ApplyVoiceSettings();
     void Speak(const std::wstring& text);
+    bool IsSpeaking() const;
     void Stop();
 
 private:

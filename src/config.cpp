@@ -103,10 +103,17 @@ void ConfigManager::Load() {
 
     g_config.enableProactiveAdvisor = GetPrivateProfileIntW(L"Settings", L"enable_proactive_advisor", 1, iniPath.c_str()) != 0;
 
+    g_config.enablePigShadow = GetPrivateProfileIntW(L"Settings", L"enable_pig_shadow", 1, iniPath.c_str()) != 0;
+    g_config.enableDynamicIsland = GetPrivateProfileIntW(L"Settings", L"enable_dynamic_island", 0, iniPath.c_str()) != 0;
+
+    wchar_t micBuf[256] = { 0 };
+    GetPrivateProfileStringW(L"Settings", L"microphone_device", L"", micBuf, 256, iniPath.c_str());
+    g_config.microphoneDevice = micBuf;
+
     g_config.autoUpdate = GetPrivateProfileIntW(L"Settings", L"auto_update", 1, iniPath.c_str()) != 0;
 
     wchar_t verBuf[64] = { 0 };
-    GetPrivateProfileStringW(L"Settings", L"app_version", L"2.4", verBuf, 64, iniPath.c_str());
+    GetPrivateProfileStringW(L"Settings", L"app_version", L"3.0", verBuf, 64, iniPath.c_str());
     g_config.appVersion = WStringToUtf8(verBuf);
 
     wchar_t urlBuf[512] = { 0 };
@@ -148,6 +155,10 @@ void ConfigManager::Save() {
     WritePrivateProfileStringW(L"Settings", L"enable_voice_assistant", g_config.enableVoiceAssistant ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Settings", L"assistant_wake_word", g_config.assistantWakeWord.c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Settings", L"enable_proactive_advisor", g_config.enableProactiveAdvisor ? L"1" : L"0", iniPath.c_str());
+
+    WritePrivateProfileStringW(L"Settings", L"enable_pig_shadow", g_config.enablePigShadow ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Settings", L"enable_dynamic_island", g_config.enableDynamicIsland ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Settings", L"microphone_device", g_config.microphoneDevice.c_str(), iniPath.c_str());
 
     WritePrivateProfileStringW(L"Settings", L"auto_update", g_config.autoUpdate ? L"1" : L"0", iniPath.c_str());
     {

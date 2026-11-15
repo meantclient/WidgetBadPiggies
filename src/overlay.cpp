@@ -90,13 +90,18 @@ bool OverlayWindow::Create() {
     wc.lpszClassName = OVERLAY_CLASS;
     RegisterClassExW(&wc);
 
-    winWidth_ = ConfigManager::Get().pigSize + 140;
-    winHeight_ = ConfigManager::Get().pigSize + 160;
+    // 1. Initial dimensions & position
+    winWidth_ = std::max(460, ConfigManager::Get().pigSize + 220);
+    winHeight_ = std::max(380, ConfigManager::Get().pigSize + 180);
 
+    isDynamicIsland_ = ConfigManager::Get().enableDynamicIsland;
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    if (ConfigManager::Get().posX >= 0 && ConfigManager::Get().posY >= 0) {
+    if (isDynamicIsland_) {
+        posX_ = (screenW - winWidth_) / 2;
+        posY_ = 0;
+    } else if (ConfigManager::Get().posX >= 0 && ConfigManager::Get().posY >= 0) {
         posX_ = std::max(0, std::min(ConfigManager::Get().posX, screenW - winWidth_));
         posY_ = std::max(0, std::min(ConfigManager::Get().posY, screenH - winHeight_));
     } else {
@@ -188,12 +193,15 @@ void OverlayWindow::ReloadSkinAndSize() {
     LoadCurrentSkin();
 
     int pigSize = ConfigManager::Get().pigSize;
-    winWidth_ = pigSize + 140;
-    winHeight_ = pigSize + 160;
+    winWidth_ = std::max(460, pigSize + 220);
+    winHeight_ = std::max(380, pigSize + 180);
 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
-    if (ConfigManager::Get().posX >= 0 && ConfigManager::Get().posY >= 0) {
+    if (isDynamicIsland_) {
+        posX_ = (screenW - winWidth_) / 2;
+        posY_ = 0;
+    } else if (ConfigManager::Get().posX >= 0 && ConfigManager::Get().posY >= 0) {
         posX_ = std::max(0, std::min(ConfigManager::Get().posX, screenW - winWidth_));
         posY_ = std::max(0, std::min(ConfigManager::Get().posY, screenH - winHeight_));
     } else {
@@ -204,6 +212,39 @@ void OverlayWindow::ReloadSkinAndSize() {
     if (hwnd_) {
         SetWindowPos(hwnd_, HWND_TOPMOST, posX_, posY_, winWidth_, winHeight_, SWP_NOACTIVATE | SWP_NOZORDER);
     }
+}
+
+void OverlayWindow::SetDynamicIslandMode(bool enable) {
+    if (isDynamicIsland_ == enable) return;
+    isDynamicIsland_ = enable;
+    ConfigManager::Get().enableDynamicIsland = enable;
+    ConfigManager::Save();
+
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    if (enable) {
+        savedPigX_ = posX_;
+        savedPigY_ = posY_;
+        posX_ = (screenW - winWidth_) / 2;
+        posY_ = 0;
+        islandCurrentWidth_ = 220.0f;
+        islandTargetWidth_ = 220.0f;
+        islandCurrentHeight_ = 38.0f;
+        islandTargetHeight_ = 38.0f;
+        PlayAudio(L"lotus.wav");
+    } else {
+        if (savedPigX_ >= 0 && savedPigY_ >= 0) {
+            posX_ = savedPigX_;
+            posY_ = savedPigY_;
+        } else {
+            posX_ = screenW - winWidth_ - 30;
+            posY_ = GetSystemMetrics(SM_CYSCREEN) - winHeight_ - 50;
+        }
+        PlayAudio(L"kill.wav");
+    }
+    if (hwnd_) {
+        SetWindowPos(hwnd_, HWND_TOPMOST, posX_, posY_, winWidth_, winHeight_, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+    Render();
 }
 
 void OverlayWindow::PlayAudio(const std::wstring& filename) {
@@ -376,58 +417,92 @@ void OverlayWindow::OnTimer() {
     const double dt = 0.016;
     animTimer_ += dt;
 
-    // 1. Mouse interactions (Left Ctrl + LMB drag, Right Shift for in-game menu)
+    // Dynamic Island smooth animation
+    if (isDynamicIsland_) {
+        if (!bubbleText_.empty()) {
+            islandTargetWidth_ = std::min(460.0f, std::max(280.0f, (float)bubbleText_.length() * 9.0f + 110.0f));
+            islandTargetHeight_ = 48.0f;
+        } else {
+            islandTargetWidth_ = 220.0f;
+            islandTargetHeight_ = 38.0f;
+        }
+        islandCurrentWidth_ += (islandTargetWidth_ - islandCurrentWidth_) * 0.18f;
+        islandCurrentHeight_ += (islandTargetHeight_ - islandCurrentHeight_) * 0.18f;
+    }
+
+    // 1. Mouse interactions (Smooth Dragging with Multi-Monitor, Snap to Dynamic Island)
     POINT pt;
     GetCursorPos(&pt);
     RECT rc;
     GetWindowRect(hwnd_, &rc);
     bool mouseOver = (hwnd_ && visible_ && PtInRect(&rc, pt));
 
+    bool lbutton = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
     bool ctrlDown = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
-    if (ctrlDown && mouseOver) {
-        // Remove WS_EX_TRANSPARENT to allow dragging
+
+    // Start drag on click over pig or with Ctrl
+    if (!isDragging_ && mouseOver && (lbutton || (ctrlDown && lbutton))) {
+        isDragging_ = true;
+        dragStartMouse_ = pt;
+        dragStartPos_ = POINT{ posX_, posY_ };
         LONG ex = GetWindowLong(hwnd_, GWL_EXSTYLE);
         if (ex & WS_EX_TRANSPARENT) {
             SetWindowLong(hwnd_, GWL_EXSTYLE, ex & ~WS_EX_TRANSPARENT);
         }
+    }
 
-        bool lbutton = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    if (isDragging_) {
         if (lbutton) {
-            if (!isDragging_) {
-                isDragging_ = true;
-                dragStartMouse_ = pt;
-                dragStartPos_ = POINT{ rc.left, rc.top };
-            } else {
-                int newX = dragStartPos_.x + (pt.x - dragStartMouse_.x);
-                int newY = dragStartPos_.y + (pt.y - dragStartMouse_.y);
-                int screenW = GetSystemMetrics(SM_CXSCREEN);
-                int screenH = GetSystemMetrics(SM_CYSCREEN);
-                newX = std::max(0, std::min(newX, screenW - winWidth_));
-                newY = std::max(0, std::min(newY, screenH - winHeight_));
+            int deltaX = pt.x - dragStartMouse_.x;
+            int deltaY = pt.y - dragStartMouse_.y;
 
+            // Multi-monitor virtual bounds (free drag, no restrictions or sudden drops!)
+            int minX = GetSystemMetrics(SM_XVIRTUALSCREEN) - winWidth_ / 2;
+            int maxX = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) - winWidth_ / 2;
+            int minY = -15; // allow reaching very top edge!
+            int maxY = GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN) - 70;
+
+            int startX = (int)dragStartPos_.x;
+            int startY = (int)dragStartPos_.y;
+            int newX = std::max(minX, std::min(startX + deltaX, maxX));
+            int newY = std::max(minY, std::min(startY + deltaY, maxY));
+
+            // SNAP TO DYNAMIC ISLAND when lifted to the very top edge!
+            if (!isDynamicIsland_ && pt.y <= 24) {
+                SetDynamicIslandMode(true);
+                isDragging_ = false;
+                LONG ex = GetWindowLong(hwnd_, GWL_EXSTYLE);
+                if (!(ex & WS_EX_TRANSPARENT)) {
+                    SetWindowLong(hwnd_, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT);
+                }
+                return;
+            }
+
+            // DETACH FROM DYNAMIC ISLAND when dragged down!
+            if (isDynamicIsland_ && deltaY > 30) {
+                SetDynamicIslandMode(false);
+                posX_ = pt.x - winWidth_ / 2;
+                posY_ = pt.y - winHeight_ / 2;
+                dragStartMouse_ = pt;
+                dragStartPos_ = POINT{ posX_, posY_ };
+                SetWindowPos(hwnd_, HWND_TOPMOST, posX_, posY_, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+            } else if (!isDynamicIsland_) {
                 posX_ = newX;
                 posY_ = newY;
                 SetWindowPos(hwnd_, HWND_TOPMOST, posX_, posY_, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
             }
         } else {
-            if (isDragging_) {
-                isDragging_ = false;
+            // Drag released
+            isDragging_ = false;
+            if (!isDynamicIsland_) {
                 ConfigManager::Get().posX = posX_;
                 ConfigManager::Get().posY = posY_;
                 ConfigManager::Save();
             }
-        }
-    } else {
-        if (isDragging_) {
-            isDragging_ = false;
-            ConfigManager::Get().posX = posX_;
-            ConfigManager::Get().posY = posY_;
-            ConfigManager::Save();
-        }
-        // Restore WS_EX_TRANSPARENT so mouse clicks pass through to Dota 2
-        LONG ex = GetWindowLong(hwnd_, GWL_EXSTYLE);
-        if (!(ex & WS_EX_TRANSPARENT)) {
-            SetWindowLong(hwnd_, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT);
+            LONG ex = GetWindowLong(hwnd_, GWL_EXSTYLE);
+            if (!(ex & WS_EX_TRANSPARENT)) {
+                SetWindowLong(hwnd_, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT);
+            }
         }
     }
 
@@ -603,62 +678,159 @@ void OverlayWindow::Render() {
     float drawW = pigW * scaleX;
     float drawH = pigH * scaleY;
     float pigX = (winWidth_ - drawW) / 2.0f + offsetX;
-    float pigY = (float)winHeight_ - drawH - 10.0f + offsetY;
+    float pigY = (float)winHeight_ - drawH - 12.0f + offsetY;
 
-    // Draw speech bubble if visible
-    if (bubbleAlpha > 0.01f && !bubbleText_.empty()) {
-        BYTE a = (BYTE)(bubbleAlpha * 255.0f);
-        float bw = (float)winWidth_ - 20.0f;
-        float bh = 60.0f;
-        float bx = 10.0f;
-        float by = std::max(5.0f, pigY - bh - 15.0f);
+    if (isDynamicIsland_) {
+        float iw = islandCurrentWidth_;
+        float ih = islandCurrentHeight_;
+        float ix = (winWidth_ - iw) / 2.0f;
+        float iy = 4.0f;
 
-        GraphicsPath bubblePath;
-        AddRoundedRect(bubblePath, RectF(bx, by, bw, bh), 14.0f);
+        // Dynamic Island pill path
+        GraphicsPath islandPath;
+        AddRoundedRect(islandPath, RectF(ix, iy, iw, ih), ih * 0.5f);
 
-        // Add tail pointing down to pig
-        PointF tailPts[] = {
-            PointF(bx + bw * 0.5f - 12.0f, by + bh - 1.0f),
-            PointF(bx + bw * 0.5f, by + bh + 14.0f),
-            PointF(bx + bw * 0.5f + 12.0f, by + bh - 1.0f)
-        };
-        bubblePath.AddPolygon(tailPts, 3);
+        // Soft drop shadow
+        GraphicsPath shadowPath;
+        AddRoundedRect(shadowPath, RectF(ix - 3.0f, iy + 2.0f, iw + 6.0f, ih + 4.0f), (ih + 4.0f) * 0.5f);
+        SolidBrush shadowBrush(Color(75, 0, 0, 0));
+        g.FillPath(&shadowBrush, &shadowPath);
 
-        SolidBrush fillBrush(Color(a, 255, 255, 255));
-        g.FillPath(&fillBrush, &bubblePath);
+        // Dark background pill (#0c0c0e)
+        SolidBrush bgBrush(Color(250, 12, 12, 15));
+        g.FillPath(&bgBrush, &islandPath);
 
-        Pen borderPen(Color(a, 30, 30, 30), 2.5f);
-        g.DrawPath(&borderPen, &bubblePath);
+        // Sleek border
+        Pen borderPen(Color(100, 255, 255, 255), 1.2f);
+        g.DrawPath(&borderPen, &islandPath);
 
-        // Draw text inside bubble with Aminahs Schoolbook Sans Serif Bold
-        std::unique_ptr<Gdiplus::Font> pFont;
-        if (!customFontName_.empty() && fontCollection_) {
-            pFont = std::make_unique<Gdiplus::Font>(customFontName_.c_str(), 12.0f, FontStyleRegular, UnitPoint, fontCollection_.get());
-            if (pFont->GetLastStatus() != Ok) {
-                pFont = std::make_unique<Gdiplus::Font>(customFontName_.c_str(), 12.0f, FontStyleBold, UnitPoint, fontCollection_.get());
+        // Mini Pig Icon
+        float iconSize = ih - 12.0f;
+        float iconX = ix + 10.0f;
+        float iconY = iy + 6.0f;
+        if (currentPigImage_) {
+            g.DrawImage(currentPigImage_.get(), RectF(iconX, iconY, iconSize, iconSize));
+        }
+
+        if (!bubbleText_.empty() && bubbleAlpha > 0.05f) {
+            // Speech text inside island
+            Gdiplus::Font textFont(L"Segoe UI", 10.0f, FontStyleBold, UnitPoint);
+            SolidBrush textBrush(Color((BYTE)(bubbleAlpha * 255.0f), 245, 245, 245));
+            StringFormat sf;
+            sf.SetAlignment(StringAlignmentNear);
+            sf.SetLineAlignment(StringAlignmentCenter);
+            sf.SetTrimming(StringTrimmingEllipsisCharacter);
+
+            RectF textRect(iconX + iconSize + 10.0f, iy, iw - (iconSize + 22.0f), ih);
+            g.DrawString(bubbleText_.c_str(), -1, &textFont, textRect, &sf, &textBrush);
+        } else {
+            // Idle Compact Island mode (matching Image 3!)
+            float badgeX = iconX + iconSize + 8.0f;
+            float badgeY = iy + (ih - 18.0f) * 0.5f;
+            float badgeW = 28.0f;
+            float badgeH = 18.0f;
+            GraphicsPath badgePath;
+            AddRoundedRect(badgePath, RectF(badgeX, badgeY, badgeW, badgeH), 4.0f);
+            SolidBrush badgeBg(Color(255, 42, 44, 48));
+            g.FillPath(&badgeBg, &badgePath);
+            Gdiplus::Font badgeFont(L"Segoe UI", 8.0f, FontStyleBold, UnitPoint);
+            SolidBrush badgeText(Color(255, 220, 225, 230));
+            StringFormat bsf;
+            bsf.SetAlignment(StringAlignmentCenter);
+            bsf.SetLineAlignment(StringAlignmentCenter);
+            g.DrawString(L"RU", -1, &badgeFont, RectF(badgeX, badgeY, badgeW, badgeH), &bsf, &badgeText);
+
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            wchar_t timeBuf[32];
+            swprintf_s(timeBuf, L"%02d:%02d", st.wHour, st.wMinute);
+
+            Gdiplus::Font timeFont(L"Segoe UI", 10.5f, FontStyleBold, UnitPoint);
+            SolidBrush timeBrush(Color(255, 255, 255, 255));
+            StringFormat tsf;
+            tsf.SetAlignment(StringAlignmentNear);
+            tsf.SetLineAlignment(StringAlignmentCenter);
+            g.DrawString(timeBuf, -1, &timeFont, PointF(badgeX + badgeW + 8.0f, iy + (ih - 18.0f) * 0.5f - 1.0f), &tsf, &timeBrush);
+
+            bool dotaRunning = DotaGsiService::Instance().IsDotaProcessRunning();
+            std::wstring statusStr = dotaRunning ? L"🎮 Dota 2" : L"☁ -9°";
+            Gdiplus::Font statFont(L"Segoe UI", 9.0f, FontStyleRegular, UnitPoint);
+            SolidBrush statBrush(Color(255, 175, 185, 195));
+            g.DrawString(statusStr.c_str(), -1, &statFont, PointF(badgeX + badgeW + 52.0f, iy + (ih - 18.0f) * 0.5f), &tsf, &statBrush);
+        }
+    } else {
+        // Draw 3D soft shadow if enabled
+        if (ConfigManager::Get().enablePigShadow) {
+            float shadowCenterY = (float)winHeight_ - 14.0f;
+            float shadowCenterX = (float)winWidth_ / 2.0f + offsetX;
+            float jumpRatio = std::max(0.0f, std::min(1.0f, -offsetY / 45.0f));
+            float shadowW = drawW * 0.78f * (1.0f - jumpRatio * 0.35f);
+            float shadowH = 18.0f * (1.0f - jumpRatio * 0.45f);
+            BYTE shadowAlpha = (BYTE)(85.0f * (1.0f - jumpRatio * 0.5f));
+
+            GraphicsPath shadowPath;
+            shadowPath.AddEllipse(shadowCenterX - shadowW * 0.5f, shadowCenterY - shadowH * 0.5f, shadowW, shadowH);
+            SolidBrush shadowBrush(Color(shadowAlpha, 0, 0, 0));
+            g.FillPath(&shadowBrush, &shadowPath);
+        }
+
+        // Draw Pig Image
+        Image* pDrawPig = currentPigImage_.get();
+        if (state_ == PigAnimationState::PANIC_LOW_HP && ConfigManager::Get().enableBeatenPig && beatenPigImage_) {
+            pDrawPig = beatenPigImage_.get();
+        }
+        if (pDrawPig) {
+            g.DrawImage(pDrawPig, RectF(pigX, pigY, drawW, drawH));
+        }
+
+        // Draw dynamic auto-sizing speech bubble (Image 2 fix)
+        if (bubbleAlpha > 0.01f && !bubbleText_.empty()) {
+            BYTE a = (BYTE)(bubbleAlpha * 255.0f);
+
+            std::unique_ptr<Gdiplus::Font> pFont;
+            if (!customFontName_.empty() && fontCollection_) {
+                pFont = std::make_unique<Gdiplus::Font>(customFontName_.c_str(), 11.5f, FontStyleBold, UnitPoint, fontCollection_.get());
             }
+            if (!pFont || pFont->GetLastStatus() != Ok) {
+                pFont = std::make_unique<Gdiplus::Font>(L"Segoe UI", 11.5f, FontStyleBold, UnitPoint);
+            }
+
+            StringFormat sf;
+            sf.SetAlignment(StringAlignmentCenter);
+            sf.SetLineAlignment(StringAlignmentCenter);
+
+            float maxTextW = (float)winWidth_ - 36.0f;
+            RectF layoutRect(0, 0, maxTextW, 800.0f);
+            RectF measuredRect;
+            g.MeasureString(bubbleText_.c_str(), -1, pFont.get(), layoutRect, &sf, &measuredRect);
+
+            float bw = std::max(180.0f, std::min((float)winWidth_ - 24.0f, measuredRect.Width + 34.0f));
+            float bh = std::max(56.0f, measuredRect.Height + 24.0f);
+            float bx = (winWidth_ - bw) / 2.0f;
+            float by = pigY - bh - 16.0f;
+            if (by < 6.0f) by = 6.0f; // Clamp inside canvas, never cut off!
+
+            GraphicsPath bubblePath;
+            AddRoundedRect(bubblePath, RectF(bx, by, bw, bh), 16.0f);
+
+            // Tail pointing down to pig head
+            PointF tailPts[] = {
+                PointF(bx + bw * 0.5f - 10.0f, by + bh - 1.0f),
+                PointF(bx + bw * 0.5f, by + bh + 14.0f),
+                PointF(bx + bw * 0.5f + 10.0f, by + bh - 1.0f)
+            };
+            bubblePath.AddPolygon(tailPts, 3);
+
+            SolidBrush fillBrush(Color(a, 255, 255, 255));
+            g.FillPath(&fillBrush, &bubblePath);
+
+            Pen borderPen(Color(a, 35, 35, 35), 2.5f);
+            g.DrawPath(&borderPen, &bubblePath);
+
+            SolidBrush textBrush(Color(a, 20, 20, 20));
+            RectF textRect(bx + 8.0f, by + 6.0f, bw - 16.0f, bh - 12.0f);
+            g.DrawString(bubbleText_.c_str(), -1, pFont.get(), textRect, &sf, &textBrush);
         }
-        if (!pFont || pFont->GetLastStatus() != Ok) {
-            pFont = std::make_unique<Gdiplus::Font>(L"Segoe UI", 12.0f, FontStyleBold, UnitPoint);
-        }
-
-        StringFormat sf;
-        sf.SetAlignment(StringAlignmentCenter);
-        sf.SetLineAlignment(StringAlignmentCenter);
-
-        SolidBrush textBrush(Color(a, 20, 20, 20));
-        RectF textRect(bx + 6.0f, by + 4.0f, bw - 12.0f, bh - 8.0f);
-        g.DrawString(bubbleText_.c_str(), -1, pFont.get(), textRect, &sf, &textBrush);
-    }
-
-    // Draw Pig Image (Regular vs Beaten on Low HP)
-    Image* pDrawPig = currentPigImage_.get();
-    if (state_ == PigAnimationState::PANIC_LOW_HP && ConfigManager::Get().enableBeatenPig && beatenPigImage_) {
-        pDrawPig = beatenPigImage_.get();
-    }
-
-    if (pDrawPig) {
-        g.DrawImage(pDrawPig, RectF(pigX, pigY, drawW, drawH));
     }
 
     // Transfer to Layered Window

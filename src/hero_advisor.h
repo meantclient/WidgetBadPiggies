@@ -37,7 +37,7 @@ public:
         const std::vector<std::pair<std::string, int>>& abilities
     );
 
-    // Queries from user (voice or hotkey F5/F6/F7)
+    // Queries from user (voice or hotkey F5/F6/F7/F8)
     std::wstring GetBuyAdvice();
     std::wstring GetSkillAdvice();
     std::wstring GetGeneralAdvice();
@@ -47,6 +47,10 @@ public:
     std::wstring GetThanksReaction();
     std::wstring GetCheerUp();
     std::wstring GetWakePrompt();
+
+    // 10,000+ Non-repeating Joke Engine
+    std::wstring GenerateJokeById(int id);
+    void InitJokeQueue();
 
     // Event commentary
     std::wstring GetDeathRoast();
@@ -87,4 +91,9 @@ private:
     int lastNotifiedLevel_ = 0;
 
     std::map<std::string, HeroBuildMeta> metaDatabase_;
+
+    // 10,000+ Non-repeating Joke Engine state
+    std::vector<int> jokeQueue_;
+    size_t currentJokeIndex_ = 0;
+    bool jokeQueueInitialized_ = false;
 };

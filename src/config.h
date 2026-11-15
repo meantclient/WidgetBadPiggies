@@ -33,9 +33,16 @@ struct AppConfig {
     std::wstring assistantWakeWord = L"Свин";
     bool enableProactiveAdvisor = true;
 
+    // Dynamic Island & Visual Customization
+    bool enablePigShadow = true;
+    bool enableDynamicIsland = false;
+
+    // Microphone device selection
+    std::wstring microphoneDevice = L""; // Empty = default system microphone
+
     // Auto-update
     bool autoUpdate = true;
-    std::string appVersion = "2.6";
+    std::string appVersion = "3.0";
     std::string updateUrl = "https://raw.githubusercontent.com/meantclient/WidgetBadPiggies/main/version.json";
 };
 
