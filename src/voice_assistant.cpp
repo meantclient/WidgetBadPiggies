@@ -70,15 +70,37 @@ bool VoiceAssistant::IsAwake() const {
 void VoiceAssistant::ListeningThread() {
     CoInitialize(NULL);
 
-    // 1. Create Inproc Recognizer and Audio Input directly from sound card
+    // 1. Create Inproc Recognizer and connect default microphone via SPCAT_AUDIOIN token
     HRESULT hr = CoCreateInstance(CLSID_SpInprocRecognizer, NULL, CLSCTX_ALL, IID_ISpRecognizer, (void**)&pInprocRec_);
     if (SUCCEEDED(hr) && pInprocRec_) {
-        HRESULT hrAudio = CoCreateInstance(CLSID_SpMMAudioIn, NULL, CLSCTX_ALL, IID_ISpAudio, (void**)&pAudio_);
-        if (SUCCEEDED(hrAudio) && pAudio_) {
-            pAudio_->SetState(SPAS_RUN, 0);
-            pInprocRec_->SetInput(pAudio_, TRUE);
-        } else {
-            pInprocRec_->SetInput(NULL, TRUE);
+        bool audioSet = false;
+        ISpObjectTokenCategory* pCat = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectTokenCategory, NULL, CLSCTX_ALL, IID_ISpObjectTokenCategory, (void**)&pCat)) && pCat) {
+            if (SUCCEEDED(pCat->SetId(SPCAT_AUDIOIN, FALSE))) {
+                WCHAR* defaultId = nullptr;
+                if (SUCCEEDED(pCat->GetDefaultTokenId(&defaultId)) && defaultId) {
+                    ISpObjectToken* pToken = nullptr;
+                    if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectToken, NULL, CLSCTX_ALL, IID_ISpObjectToken, (void**)&pToken)) && pToken) {
+                        if (SUCCEEDED(pToken->SetId(NULL, defaultId, FALSE))) {
+                            if (SUCCEEDED(pInprocRec_->SetInput(pToken, TRUE))) {
+                                audioSet = true;
+                            }
+                        }
+                        pToken->Release();
+                    }
+                    CoTaskMemFree(defaultId);
+                }
+            }
+            pCat->Release();
+        }
+
+        // Fallback to SpMMAudioIn if token method wasn't set
+        if (!audioSet) {
+            HRESULT hrAudio = CoCreateInstance(CLSID_SpMMAudioIn, NULL, CLSCTX_ALL, IID_ISpAudio, (void**)&pAudio_);
+            if (SUCCEEDED(hrAudio) && pAudio_) {
+                pAudio_->SetState(SPAS_RUN, 0);
+                pInprocRec_->SetInput(pAudio_, TRUE);
+            }
         }
         pInprocRec_->CreateRecoContext(&pRecoCtx_);
     }
@@ -263,6 +285,8 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
     if (text.find(L"spin") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"sveen") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"swine") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"seen") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"swim") != std::wstring::npos) hasWakeWord = true;
 
     // If pig was awakened recently (< 10 sec ago), he is actively listening without needing wake word!
     bool canProceed = hasWakeWord || isAwakeWindow;
@@ -275,8 +299,11 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
         text.find(L"как дела") != std::wstring::npos ||
         text.find(L"здарова") != std::wstring::npos ||
         text.find(L"красава") != std::wstring::npos ||
+        text.find(L"купить") != std::wstring::npos ||
+        text.find(L"качать") != std::wstring::npos ||
         text.find(L"buy") != std::wstring::npos ||
-        text.find(L"joke") != std::wstring::npos) {
+        text.find(L"joke") != std::wstring::npos ||
+        text.find(L"rover") != std::wstring::npos) {
         canProceed = true;
     }
 
