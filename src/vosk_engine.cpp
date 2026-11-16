@@ -149,6 +149,7 @@ bool VoskEngine::Init(const std::wstring& customModelPath) {
     if (fnVoskRecognizerNewGrammar_) {
         std::wstring wake = ConfigManager::Get().assistantWakeWord;
         if (wake.empty()) wake = L"Свин";
+        for (auto& c : wake) c = (wchar_t)towlower(c);
         int n = WideCharToMultiByte(CP_UTF8, 0, wake.c_str(), -1, nullptr, 0, nullptr, nullptr);
         std::string utf8(n > 0 ? n : 0, '\0');
         if (n > 0) { WideCharToMultiByte(CP_UTF8, 0, wake.c_str(), -1, &utf8[0], n, nullptr, nullptr); utf8.pop_back(); }
@@ -231,6 +232,7 @@ void VoskEngine::SetConversationMode(bool active) {
     if (!active && fnVoskRecognizerNewGrammar_) {
         std::wstring wake = ConfigManager::Get().assistantWakeWord;
         if (wake.empty()) wake = L"Свин";
+        for (auto& c : wake) c = (wchar_t)towlower(c);
         int n = WideCharToMultiByte(CP_UTF8, 0, wake.c_str(), -1, nullptr, 0, nullptr, nullptr);
         std::string utf8(n > 0 ? n : 0, '\0');
         if (n > 0) { WideCharToMultiByte(CP_UTF8, 0, wake.c_str(), -1, &utf8[0], n, nullptr, nullptr); utf8.pop_back(); }

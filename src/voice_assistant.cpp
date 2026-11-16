@@ -333,6 +333,12 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText, bool isF
     if (text.find(L"pig") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"svin") != std::wstring::npos) hasWakeWord = true;
 
+    // Switch out of wake-word-only recognition as soon as the trigger is heard.
+    if (hasWakeWord) {
+        awakeUntil_ = now + std::chrono::seconds(14);
+        VoskEngine::Instance().SetConversationMode(true);
+    }
+
     // Detect specific Intent / Meme
     std::wstring intent = L"";
 
@@ -456,6 +462,23 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText, bool isF
     else if (text.find(L"по-братски") != std::wstring::npos || text.find(L"спокойн") != std::wstring::npos ||
              text.find(L"хватит") != std::wstring::npos) {
         intent = L"toxic_off";
+    }
+
+    // If the wake word was spoken by itself, acknowledge it and wait for the next phrase.
+    std::wstring remainder = text;
+    if (!wakeWord.empty()) {
+        size_t wakePos = remainder.find(wakeWord);
+        if (wakePos != std::wstring::npos) remainder.erase(wakePos, wakeWord.length());
+    }
+    remainder.erase(std::remove_if(remainder.begin(), remainder.end(), [](wchar_t c) {
+        return iswspace(c) || c == L',' || c == L'.' || c == L'!' || c == L'?' || c == L':';
+    }), remainder.end());
+    if (hasWakeWord && remainder.empty()) {
+        s_lastTriggerTick = nowTick;
+        awakeUntil_ = now + std::chrono::seconds(14);
+        VoskEngine::Instance().ResetRecognizer();
+        DispatchVoiceAdvice(HeroAdvisor::Instance().GetWakePrompt());
+        return;
     }
 
     // 1. Check AI Brain (Smart Playlist with Memory, System automation, Media control, Natural Conversation)
