@@ -7,6 +7,13 @@
 #include <sstream>
 #include <algorithm>
 #include <random>
+#include <wininet.h>
+#include <cstdlib>
+#include <cmath>
+#include <filesystem>
+#include <shlobj.h>
+
+#pragma comment(lib, "wininet.lib")
 
 // UTF-8 Helper functions using native Win32 API
 static std::string WideToUtf8(const std::wstring& wstr) {
@@ -53,6 +60,73 @@ static bool WriteStringToFile(const std::wstring& path, const std::string& data)
     BOOL ok = WriteFile(hFile, data.data(), (DWORD)data.size(), &bytesWritten, NULL);
     CloseHandle(hFile);
     return (ok && bytesWritten == (DWORD)data.size());
+}
+
+static std::string UrlEncodeUtf8(const std::wstring& value) {
+    std::string bytes = WideToUtf8(value), out;
+    const char* hex = "0123456789ABCDEF";
+    for (unsigned char c : bytes) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') out += (char)c;
+        else if (c == ' ') out += "%20";
+        else { out += '%'; out += hex[c >> 4]; out += hex[c & 15]; }
+    }
+    return out;
+}
+
+static bool HttpGetUtf8(const std::wstring& url, std::string& body) {
+    HINTERNET session = InternetOpenW(L"BadPiggiesWidget/5.0", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
+    if (!session) return false;
+    DWORD timeout = 7000;
+    InternetSetOptionW(session, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+    InternetSetOptionW(session, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+    HINTERNET request = InternetOpenUrlW(session, url.c_str(), nullptr, 0, INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_SECURE, 0);
+    if (!request) { InternetCloseHandle(session); return false; }
+    char buffer[4096]; DWORD got = 0;
+    while (InternetReadFile(request, buffer, sizeof(buffer), &got) && got) {
+        body.append(buffer, got);
+        if (body.size() > 1024 * 1024) break;
+    }
+    InternetCloseHandle(request); InternetCloseHandle(session);
+    return !body.empty();
+}
+
+static std::wstring WeatherCodeRu(int code) {
+    if (code == 0) return L"ясно";
+    if (code <= 3) return L"облачно";
+    if (code == 45 || code == 48) return L"туман";
+    if (code == 51 || code == 53 || code == 55 || code == 56 || code == 57) return L"морось";
+    if (code == 61 || code == 63 || code == 65 || code == 80 || code == 81 || code == 82) return L"дождь";
+    if (code == 66 || code == 67) return L"ледяной дождь";
+    if (code == 71 || code == 73 || code == 75 || code == 77 || code == 85 || code == 86) return L"снег";
+    if (code >= 95) return L"гроза";
+    return L"переменная погода";
+}
+
+static bool LaunchStartMenuShortcut(const std::wstring& appName) {
+    std::wstring query = appName;
+    while (!query.empty() && iswspace(query.front())) query.erase(query.begin());
+    while (!query.empty() && iswspace(query.back())) query.pop_back();
+    if (query.empty()) return false;
+    for (auto& c : query) c = (wchar_t)towlower(c);
+
+    wchar_t roots[2][MAX_PATH] = {};
+    SHGetFolderPathW(nullptr, CSIDL_PROGRAMS, nullptr, SHGFP_TYPE_CURRENT, roots[0]);
+    SHGetFolderPathW(nullptr, CSIDL_COMMON_PROGRAMS, nullptr, SHGFP_TYPE_CURRENT, roots[1]);
+    for (const auto& root : roots) {
+        if (!root[0]) continue;
+        std::error_code ec;
+        for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec), end; it != end; it.increment(ec)) {
+            if (ec) { ec.clear(); continue; }
+            if (!it->is_regular_file(ec) || ec || it->path().extension() != L".lnk") continue;
+            std::wstring label = it->path().stem().wstring();
+            for (auto& c : label) c = (wchar_t)towlower(c);
+            if (label.find(query) != std::wstring::npos || query.find(label) != std::wstring::npos) {
+                auto result = (INT_PTR)ShellExecuteW(nullptr, L"open", it->path().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                return result > 32;
+            }
+        }
+    }
+    return false;
 }
 
 // ============================================================================
@@ -109,6 +183,10 @@ void AiMemory::Load() {
                 }
             }
         }
+        if (j.contains("style") && j["style"].is_object()) {
+            casualStyle_ = j["style"].value("casual", 0);
+            conciseStyle_ = j["style"].value("concise", 0);
+        }
     } catch (...) {}
 
     if (musicService_.empty()) musicService_ = L"yandex";
@@ -137,6 +215,7 @@ void AiMemory::Save() {
             histArr.push_back(hItem);
         }
         j["history"] = histArr;
+        j["style"] = { {"casual", casualStyle_}, {"concise", conciseStyle_} };
 
         std::string jsonStr = j.dump(2);
         WriteStringToFile(path, jsonStr);
@@ -249,6 +328,23 @@ std::wstring AiMemory::GetLastTopic() const {
     return history_.back().userQuery;
 }
 
+void AiMemory::ObserveStyle(const std::wstring& text) {
+    std::wstring lower = text;
+    for (auto& ch : lower) ch = (wchar_t)towlower(ch);
+    auto adjust = [](int& score, bool positive) { score = (std::max)(0, (std::min)(20, score + (positive ? 1 : -1))); };
+    bool casual = lower.find(L"бро") != std::wstring::npos || lower.find(L"брат") != std::wstring::npos ||
+        lower.find(L"чё") != std::wstring::npos || lower.find(L"че ") != std::wstring::npos || lower.find(L"го ") != std::wstring::npos;
+    if (casual) adjust(casualStyle_, true);
+    else if (text.size() > 15) adjust(casualStyle_, false);
+    size_t words = 0; bool inWord = false;
+    for (wchar_t c : text) { if (iswalnum(c)) { if (!inWord) ++words; inWord = true; } else inWord = false; }
+    adjust(conciseStyle_, words <= 8);
+    Save();
+}
+
+bool AiMemory::PrefersConcise() const { return conciseStyle_ >= 3; }
+bool AiMemory::PrefersCasual() const { return casualStyle_ >= 3; }
+
 // ============================================================================
 // AiBrain Implementation (General AI Brain & Automation)
 // ============================================================================
@@ -360,6 +456,22 @@ void AiBrain::LaunchApp(const std::wstring& appName) {
     else if (appName == L"browser") {
         ShellExecuteW(NULL, L"open", L"https://ya.ru", NULL, NULL, SW_SHOWNORMAL);
     }
+    else if (appName == L"yandex") {
+        wchar_t local[MAX_PATH] = {};
+        GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+        std::wstring paths[] = {
+            std::wstring(local) + L"\\Yandex\\YandexBrowser\\Application\\browser.exe",
+            L"C:\\Program Files (x86)\\Yandex\\YandexBrowser\\Application\\browser.exe",
+            L"C:\\Program Files\\Yandex\\YandexBrowser\\Application\\browser.exe"
+        };
+        for (const auto& path : paths) {
+            if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                ShellExecuteW(NULL, L"open", path.c_str(), L"https://ya.ru", NULL, SW_SHOWNORMAL);
+                return;
+            }
+        }
+        ShellExecuteW(NULL, L"open", L"https://ya.ru", NULL, NULL, SW_SHOWNORMAL);
+    }
 }
 
 bool AiBrain::OpenMusicPlaylist(const std::wstring& serviceOverride) {
@@ -400,6 +512,54 @@ bool AiBrain::OpenMusicPlaylist(const std::wstring& serviceOverride) {
 bool AiBrain::ProcessSpeech(const std::wstring& userSpeech, std::wstring& outReply) {
     std::wstring text = userSpeech;
     for (auto& ch : text) ch = (wchar_t)towlower(ch);
+    AiMemory::Instance().ObserveStyle(userSpeech);
+
+    // Live weather is fetched only after an explicit request, so idle listening stays offline.
+    if (text.find(L"погод") != std::wstring::npos || text.find(L"температур") != std::wstring::npos) {
+        size_t marker = text.find(L"в ");
+        if (marker == std::wstring::npos) marker = text.find(L"в городе ");
+        std::wstring city;
+        if (marker != std::wstring::npos) {
+            size_t start = marker + (text.compare(marker, 9, L"в городе ") == 0 ? 9 : 2);
+            city = text.substr(start);
+        } else if (text.find(L"смирных") != std::wstring::npos) city = L"Смирных";
+        while (!city.empty() && (city.back() == L'.' || city.back() == L'?' || city.back() == L'!' || city.back() == L',')) city.pop_back();
+        if (city.empty()) {
+            outReply = L"В каком городе посмотреть погоду?";
+            AiMemory::Instance().AddDialogHistory(userSpeech, outReply);
+            return true;
+        }
+
+        std::string geoBody, weatherBody;
+        std::wstring geoUrl = L"https://geocoding-api.open-meteo.com/v1/search?name=" + Utf8ToWide(UrlEncodeUtf8(city)) + L"&count=1&language=ru&format=json";
+        try {
+            if (HttpGetUtf8(geoUrl, geoBody)) {
+                auto geo = nlohmann::json::parse(geoBody);
+                if (geo.contains("results") && geo["results"].is_array() && !geo["results"].empty()) {
+                    auto place = geo["results"][0];
+                    std::string lat = std::to_string(place.value("latitude", 0.0));
+                    std::string lon = std::to_string(place.value("longitude", 0.0));
+                    std::wstring weatherUrl = L"https://api.open-meteo.com/v1/forecast?latitude=" + Utf8ToWide(lat) + L"&longitude=" + Utf8ToWide(lon) + L"&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto";
+                    if (HttpGetUtf8(weatherUrl, weatherBody)) {
+                        auto weather = nlohmann::json::parse(weatherBody);
+                        auto current = weather.at("current");
+                        int degrees = (int)std::lround(current.value("temperature_2m", 0.0));
+                        int feels = (int)std::lround(current.value("apparent_temperature", (double)degrees));
+                        int humidity = current.value("relative_humidity_2m", 0);
+                        int code = current.value("weather_code", 0);
+                        int wind = (int)std::lround(current.value("wind_speed_10m", 0.0));
+                        std::wstring displayCity = place.value("name", std::string()) .empty() ? city : Utf8ToWide(place.value("name", std::string()));
+                        outReply = displayCity + L": сейчас " + std::to_wstring(degrees) + L" градусов, " + WeatherCodeRu(code) +
+                            L", ощущается как " + std::to_wstring(feels) + L". Влажность " + std::to_wstring(humidity) +
+                            L" процентов, ветер " + std::to_wstring(wind) + L" километров в час.";
+                    }
+                }
+            }
+        } catch (...) {}
+        if (outReply.empty()) outReply = L"Не получилось получить погоду для «" + city + L"». Проверь подключение к интернету или название города.";
+        AiMemory::Instance().AddDialogHistory(userSpeech, outReply);
+        return true;
+    }
 
     // 1. GENERAL MEMORY: REMEMBERING & RECALLING
     if (text.find(L"что ты помнишь") != std::wstring::npos || text.find(L"что ты знаешь обо мне") != std::wstring::npos ||
@@ -509,6 +669,13 @@ bool AiBrain::ProcessSpeech(const std::wstring& userSpeech, std::wstring& outRep
         AiMemory::Instance().AddDialogHistory(userSpeech, outReply);
         return true;
     }
+    if ((text.find(L"открой яндекс") != std::wstring::npos || text.find(L"запусти яндекс") != std::wstring::npos) &&
+        text.find(L"музык") == std::wstring::npos && text.find(L"плейлист") == std::wstring::npos) {
+        LaunchApp(L"yandex");
+        outReply = L"Открываю Яндекс Браузер.";
+        AiMemory::Instance().AddDialogHistory(userSpeech, outReply);
+        return true;
+    }
 
     // 5. MUSIC / PLAYLIST (ONLY when user explicitly requests music or playlist)
     bool explicitlyMentionsMusic = (text.find(L"плейлист") != std::wstring::npos ||
@@ -560,6 +727,23 @@ bool AiBrain::ProcessSpeech(const std::wstring& userSpeech, std::wstring& outRep
         }
     }
 
+    // Launch any installed desktop app that has a Start Menu shortcut.
+    size_t openAt = text.find(L"открой ");
+    size_t runAt = text.find(L"запусти ");
+    size_t commandAt = openAt != std::wstring::npos ? openAt : runAt;
+    if (commandAt != std::wstring::npos) {
+        size_t commandLen = commandAt == openAt ? 7 : 8;
+        std::wstring appName = text.substr(commandAt + commandLen);
+        while (!appName.empty() && (appName.front() == L' ' || appName.front() == L',' || appName.front() == L':')) appName.erase(appName.begin());
+        while (!appName.empty() && (appName.back() == L'.' || appName.back() == L'?' || appName.back() == L'!')) appName.pop_back();
+        if (!appName.empty()) {
+            if (LaunchStartMenuShortcut(appName)) outReply = L"Открываю " + appName + L".";
+            else outReply = L"Не нашёл ярлык «" + appName + L"» в меню Пуск. Добавь ярлык приложения в меню Пуск и попробуй ещё раз.";
+            AiMemory::Instance().AddDialogHistory(userSpeech, outReply);
+            return true;
+        }
+    }
+
     // Media keys
     if (text.find(L"пауза") != std::wstring::npos || text.find(L"стоп музык") != std::wstring::npos) {
         ControlMedia(0);
@@ -595,6 +779,13 @@ bool AiBrain::ProcessSpeech(const std::wstring& userSpeech, std::wstring& outRep
 
     // 6. NATURAL CONVERSATIONAL AI RESPONSES (Clean, organic, no repetitive keywords!)
     outReply = GenerateConversationalReply(userSpeech);
+    if (AiMemory::Instance().PrefersConcise()) {
+        size_t end = outReply.find_first_of(L".!?", 35);
+        if (end != std::wstring::npos) outReply.resize(end + 1);
+    }
+    if (AiMemory::Instance().PrefersCasual() && outReply.rfind(L"Бро, ", 0) != 0) {
+        outReply = L"Бро, " + outReply;
+    }
     AiMemory::Instance().AddDialogHistory(userSpeech, outReply);
     return true;
 }

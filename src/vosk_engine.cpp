@@ -6,6 +6,7 @@
 #endif
 #include "vosk_engine.h"
 #include "voice.h"
+#include "config.h"
 #include "nlohmann/json.hpp"
 #include <shlwapi.h>
 #include <iostream>
@@ -57,6 +58,7 @@ bool VoskEngine::LoadVoskLibrary() {
     fnVoskModelNew_ = (FnVoskModelNew)GetProcAddress(hVoskDll_, "vosk_model_new");
     fnVoskModelFree_ = (FnVoskModelFree)GetProcAddress(hVoskDll_, "vosk_model_free");
     fnVoskRecognizerNew_ = (FnVoskRecognizerNew)GetProcAddress(hVoskDll_, "vosk_recognizer_new");
+    fnVoskRecognizerNewGrammar_ = (FnVoskRecognizerNewGrammar)GetProcAddress(hVoskDll_, "vosk_recognizer_new_grm");
     fnVoskRecognizerFree_ = (FnVoskRecognizerFree)GetProcAddress(hVoskDll_, "vosk_recognizer_free");
     fnVoskRecognizerAcceptWaveform_ = (FnVoskRecognizerAcceptWaveform)GetProcAddress(hVoskDll_, "vosk_recognizer_accept_waveform");
     fnVoskRecognizerResult_ = (FnVoskRecognizerResult)GetProcAddress(hVoskDll_, "vosk_recognizer_result");
@@ -143,7 +145,20 @@ bool VoskEngine::Init(const std::wstring& customModelPath) {
         return false;
     }
 
-    pRecognizer_ = fnVoskRecognizerNew_(pModel_, 16000.0f);
+    conversationMode_ = false;
+    if (fnVoskRecognizerNewGrammar_) {
+        std::wstring wake = ConfigManager::Get().assistantWakeWord;
+        if (wake.empty()) wake = L"Свин";
+        int n = WideCharToMultiByte(CP_UTF8, 0, wake.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        std::string utf8(n > 0 ? n : 0, '\0');
+        if (n > 0) { WideCharToMultiByte(CP_UTF8, 0, wake.c_str(), -1, &utf8[0], n, nullptr, nullptr); utf8.pop_back(); }
+        std::string grammar = "[\"" + utf8 + "\"]";
+        pRecognizer_ = fnVoskRecognizerNewGrammar_(pModel_, 16000.0f, grammar.c_str());
+    }
+    if (!pRecognizer_) {
+        conversationMode_ = true;
+        pRecognizer_ = fnVoskRecognizerNew_(pModel_, 16000.0f);
+    }
     if (!pRecognizer_) {
         fnVoskModelFree_(pModel_);
         pModel_ = nullptr;
@@ -207,6 +222,27 @@ void VoskEngine::ResetRecognizer() {
     if (pRecognizer_ && fnVoskRecognizerReset_) {
         fnVoskRecognizerReset_(pRecognizer_);
     }
+}
+
+void VoskEngine::SetConversationMode(bool active) {
+    std::lock_guard<std::recursive_mutex> lock(recognizerMutex_);
+    if (!pModel_ || !pRecognizer_ || conversationMode_ == active) return;
+    void* replacement = nullptr;
+    if (!active && fnVoskRecognizerNewGrammar_) {
+        std::wstring wake = ConfigManager::Get().assistantWakeWord;
+        if (wake.empty()) wake = L"Свин";
+        int n = WideCharToMultiByte(CP_UTF8, 0, wake.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        std::string utf8(n > 0 ? n : 0, '\0');
+        if (n > 0) { WideCharToMultiByte(CP_UTF8, 0, wake.c_str(), -1, &utf8[0], n, nullptr, nullptr); utf8.pop_back(); }
+        std::string grammar = "[\"" + utf8 + "\"]";
+        replacement = fnVoskRecognizerNewGrammar_(pModel_, 16000.0f, grammar.c_str());
+    } else if (active) {
+        replacement = fnVoskRecognizerNew_(pModel_, 16000.0f);
+    }
+    if (!replacement) return;
+    if (fnVoskRecognizerFree_) fnVoskRecognizerFree_(pRecognizer_);
+    pRecognizer_ = replacement;
+    conversationMode_ = active;
 }
 
 static std::wstring Utf8ToWide(const std::string& str) {

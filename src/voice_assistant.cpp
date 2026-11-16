@@ -286,6 +286,9 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText, bool isF
     // CRITICAL: Only trigger actions on final recognition hypotheses!
     // Partial hypotheses update the Settings UI status only so the pig never cuts the user off mid-sentence.
     if (!isFinal) {
+        if (usingVosk_.load() && std::chrono::steady_clock::now() >= awakeUntil_) {
+            VoskEngine::Instance().SetConversationMode(false);
+        }
         return;
     }
 
@@ -521,6 +524,7 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText, bool isF
     if (hasWakeWord) {
         s_lastTriggerTick = nowTick;
         awakeUntil_ = now + std::chrono::seconds(14);
+        VoskEngine::Instance().SetConversationMode(true);
         VoskEngine::Instance().ResetRecognizer();
         DispatchVoiceAdvice(HeroAdvisor::Instance().GetWakePrompt());
         return;

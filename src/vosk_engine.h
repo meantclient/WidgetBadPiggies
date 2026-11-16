@@ -25,6 +25,7 @@ public:
     bool IsModelLoaded() const { return modelLoaded_; }
     bool IsListening() const { return isListening_.load(); }
     void ResetRecognizer();
+    void SetConversationMode(bool active);
 
     static std::vector<std::pair<std::wstring, UINT>> GetInputDevices();
     void SetInputDevice(const std::wstring& deviceName);
@@ -56,6 +57,7 @@ private:
     typedef void* (*FnVoskModelNew)(const char* path);
     typedef void (*FnVoskModelFree)(void* model);
     typedef void* (*FnVoskRecognizerNew)(void* model, float sample_rate);
+    typedef void* (*FnVoskRecognizerNewGrammar)(void* model, float sample_rate, const char* grammar);
     typedef void (*FnVoskRecognizerFree)(void* recognizer);
     typedef int (*FnVoskRecognizerAcceptWaveform)(void* recognizer, const char* data, int length);
     typedef const char* (*FnVoskRecognizerResult)(void* recognizer);
@@ -67,6 +69,7 @@ private:
     FnVoskModelNew fnVoskModelNew_ = nullptr;
     FnVoskModelFree fnVoskModelFree_ = nullptr;
     FnVoskRecognizerNew fnVoskRecognizerNew_ = nullptr;
+    FnVoskRecognizerNewGrammar fnVoskRecognizerNewGrammar_ = nullptr;
     FnVoskRecognizerFree fnVoskRecognizerFree_ = nullptr;
     FnVoskRecognizerAcceptWaveform fnVoskRecognizerAcceptWaveform_ = nullptr;
     FnVoskRecognizerResult fnVoskRecognizerResult_ = nullptr;
@@ -74,4 +77,5 @@ private:
     FnVoskRecognizerFinalResult fnVoskRecognizerFinalResult_ = nullptr;
     FnVoskRecognizerReset fnVoskRecognizerReset_ = nullptr;
     FnVoskSetLogLevel fnVoskSetLogLevel_ = nullptr;
+    bool conversationMode_ = true;
 };

@@ -35,6 +35,9 @@ public:
     void AddDialogHistory(const std::wstring& userQuery, const std::wstring& pigResponse);
     std::vector<DialogHistoryItem> GetRecentHistory(int maxCount = 5) const;
     std::wstring GetLastTopic() const;
+    void ObserveStyle(const std::wstring& text);
+    bool PrefersConcise() const;
+    bool PrefersCasual() const;
 
 private:
     AiMemory();
@@ -45,6 +48,8 @@ private:
     std::map<std::wstring, std::wstring> facts_;
     std::vector<DialogHistoryItem> history_;
     std::wstring lastTopic_ = L"";
+    int casualStyle_ = 0;
+    int conciseStyle_ = 0;
 };
 
 class AiBrain {
@@ -75,5 +80,4 @@ private:
     AiBrain();
     ~AiBrain();
 
-    bool QueryGeminiApi(const std::wstring& prompt, std::wstring& outReply);
 };

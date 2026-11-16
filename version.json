@@ -1,5 +1,5 @@
 {
-  "version": "4.0",
-  "download_url": "https://github.com/meantclient/WidgetBadPiggies/releases/download/v4.0/BadPiggiesSetup.exe",
-  "changelog": "Большое обновление: голосовой помощник на Vosk, улучшения интерфейса и новые игровые советы."
+  "version": "5.0",
+  "download_url": "https://github.com/meantclient/WidgetBadPiggies/releases/download/v5.0/BadPiggiesSetup.exe",
+  "changelog": "Крупное обновление: запуск приложений голосом, погода по запросу, локальная подстройка манеры общения и облегчённое распознавание слова пробуждения. Без платных AI API и VPN."
 }
