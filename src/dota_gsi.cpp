@@ -6,12 +6,123 @@
 #include <fstream>
 #include <sstream>
 #include <cctype>
+#include <set>
 #include <nlohmann/json.hpp>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "shlwapi.lib")
 
 using json = nlohmann::json;
+
+static std::wstring DraftUtf8ToWide(const std::string& value) {
+    if (value.empty()) return L"";
+    int count = MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, nullptr, 0);
+    if (count <= 1) return L"";
+    std::wstring result(count, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, &result[0], count);
+    result.pop_back();
+    return result;
+}
+
+static std::string DraftHeroName(const json& field) {
+    if (field.is_string()) return field.get<std::string>();
+    if (field.is_object()) {
+        if (field.contains("class") && field["class"].is_string()) return field["class"].get<std::string>();
+        if (field.contains("name") && field["name"].is_string()) return field["name"].get<std::string>();
+    }
+    return "";
+}
+
+static void UpdateDraftFromGsi(const json& root) {
+    const json* map = root.contains("map") && root["map"].is_object() ? &root["map"] : nullptr;
+    const json* draft = root.contains("draft") && root["draft"].is_object() ? &root["draft"] : nullptr;
+    if (!map || !draft || !map->contains("game_state") || !(*map)["game_state"].is_string() ||
+        (*map)["game_state"].get<std::string>() != "DOTA_GAMERULES_STATE_HERO_SELECTION") {
+        HeroAdvisor::Instance().UpdateDraftContext(L"", L"");
+        return;
+    }
+
+    std::wstring allies, enemies;
+    std::set<std::string> unavailable;
+    std::string ownTeam;
+    if (root.contains("player") && root["player"].is_object() && root["player"].contains("team")) {
+        const auto& team = root["player"]["team"];
+        if (team.is_string()) {
+            std::string t = team.get<std::string>();
+            ownTeam = (t == "radiant" || t == "2") ? "team2" : (t == "dire" || t == "3") ? "team3" : "";
+        } else if (team.is_number_integer()) {
+            int t = team.get<int>();
+            ownTeam = t == 2 ? "team2" : t == 3 ? "team3" : "";
+        }
+    }
+
+    static const json catalog = []() {
+        json loaded;
+        std::wstring catalogPath = ConfigManager::GetExeDir() + L"\\data\\heroes.json";
+        std::ifstream catalogFile(catalogPath, std::ios::binary);
+        if (catalogFile.is_open()) { try { catalogFile >> loaded; } catch (...) { loaded = json(); } }
+        return loaded;
+    }();
+    auto localized = [&](const std::string& idOrName) -> std::wstring {
+        if (catalog.is_object()) {
+            for (auto it = catalog.begin(); it != catalog.end(); ++it) {
+                if (!it.value().is_object()) continue;
+                const auto& h = it.value();
+                if (h.value("name", std::string()) == idOrName || std::to_string(h.value("id", 0)) == idOrName) {
+                    return DraftUtf8ToWide(h.value("localized_name", idOrName));
+                }
+            }
+        }
+        return DraftUtf8ToWide(idOrName);
+    };
+
+    for (const char* teamKey : {"team2", "team3"}) {
+        if (!draft->contains(teamKey) || !(*draft)[teamKey].is_object()) continue;
+        const auto& team = (*draft)[teamKey];
+        for (const char* kind : {"pick", "ban"}) {
+            for (int i = 0; i < (std::string(kind) == "pick" ? 5 : 7); ++i) {
+                std::string prefix = std::string(kind) + std::to_string(i);
+                std::string classKey = prefix + "_class";
+                std::string idKey = prefix + "_id";
+                std::string name;
+                if (team.contains(classKey) && team[classKey].is_string()) name = team[classKey].get<std::string>();
+                else if (team.contains(prefix)) name = DraftHeroName(team[prefix]);
+                if (name.empty() && team.contains(idKey)) {
+                    const auto& id = team[idKey];
+                    if (id.is_number_integer()) name = std::to_string(id.get<int>());
+                    else if (id.is_string()) name = id.get<std::string>();
+                } else if (name.empty() && team.contains(prefix) && team[prefix].is_object() && team[prefix].contains("id")) {
+                    const auto& id = team[prefix]["id"];
+                    if (id.is_number_integer()) name = std::to_string(id.get<int>());
+                    else if (id.is_string()) name = id.get<std::string>();
+                }
+                if (name.empty() || name == "0") continue;
+                unavailable.insert(name);
+                std::wstring line = localized(name);
+                std::wstring& bucket = (std::string(teamKey) == ownTeam) == (std::string(kind) == "pick") ? allies : enemies;
+                if (!bucket.empty()) bucket += L", ";
+                bucket += line;
+            }
+        }
+    }
+
+    std::wstring candidates;
+    if (catalog.is_object()) {
+        for (auto it = catalog.begin(); it != catalog.end(); ++it) {
+            if (!it.value().is_object()) continue;
+            const auto& h = it.value();
+            bool captainsMode = map->contains("game_mode") && (*map)["game_mode"].is_number_integer() && (*map)["game_mode"].get<int>() == 2;
+            if (captainsMode && !h.value("cm_enabled", false)) continue;
+            std::string name = h.value("name", std::string());
+            if (name.empty() || unavailable.count(name) || unavailable.count(std::to_string(h.value("id", 0)))) continue;
+            if (!candidates.empty()) candidates += L", ";
+            candidates += DraftUtf8ToWide(h.value("localized_name", name));
+        }
+    }
+    std::wstring context = L"Текущий драфт Dota 2. Пики союзников: " + (allies.empty() ? L"пока нет" : allies) +
+        L". Пики и баны противника/обеих команд: " + (enemies.empty() ? L"пока нет" : enemies) + L".";
+    HeroAdvisor::Instance().UpdateDraftContext(context, candidates);
+}
 
 DotaGsiService& DotaGsiService::Instance() {
     static DotaGsiService instance;
@@ -192,6 +303,7 @@ void DotaGsiService::ProcessGsiPayload(const std::string& jsonStr) {
 
     try {
         json root = json::parse(jsonStr);
+        UpdateDraftFromGsi(root);
 
         // 1. Process Player Stats
         if (root.contains("player") && root["player"].is_object()) {

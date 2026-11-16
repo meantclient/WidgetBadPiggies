@@ -1,5 +1,8 @@
 #include "ai_brain.h"
 #include "config.h"
+#include "local_ai.h"
+#include "hero_advisor.h"
+#include "voice_assistant.h"
 #include <nlohmann/json.hpp>
 #include <windows.h>
 #include <shellapi.h>
@@ -100,6 +103,61 @@ static std::wstring WeatherCodeRu(int code) {
     if (code == 71 || code == 73 || code == 75 || code == 77 || code == 85 || code == 86) return L"снег";
     if (code >= 95) return L"гроза";
     return L"переменная погода";
+}
+
+static bool TrySimpleArithmetic(const std::wstring& text, std::wstring& result) {
+    std::vector<std::wstring> tokens;
+    std::wstring token;
+    for (wchar_t c : text) {
+        if (iswalnum(c) || c == L'+' || c == L'-' || c == L'*' || c == L'/' || c == L'×' || c == L'÷') token += c;
+        else if (!token.empty()) { tokens.push_back(token); token.clear(); }
+    }
+    if (!token.empty()) tokens.push_back(token);
+    auto number = [](const std::wstring& word, double& value) {
+        static const std::map<std::wstring, int> words = {
+            {L"ноль",0},{L"один",1},{L"одна",1},{L"одно",1},{L"раз",1},{L"два",2},{L"две",2},{L"три",3},
+            {L"четыре",4},{L"пять",5},{L"шесть",6},{L"семь",7},{L"восемь",8},{L"девять",9},{L"десять",10},
+            {L"одиннадцать",11},{L"двенадцать",12},{L"тринадцать",13},{L"четырнадцать",14},{L"пятнадцать",15},
+            {L"шестнадцать",16},{L"семнадцать",17},{L"восемнадцать",18},{L"девятнадцать",19},{L"двадцать",20}
+        };
+        auto found = words.find(word);
+        if (found != words.end()) { value = found->second; return true; }
+        wchar_t* end = nullptr;
+        double parsed = wcstod(word.c_str(), &end);
+        if (end && *end == L'\0' && end != word.c_str()) { value = parsed; return true; }
+        return false;
+    };
+    auto op = [](const std::wstring& word) -> wchar_t {
+        if (word == L"+" || word == L"плюс" || word == L"сложить") return L'+';
+        if (word == L"-" || word == L"минус" || word == L"вычесть") return L'-';
+        if (word == L"*" || word == L"×" || word == L"умножить" || word == L"умножитьна") return L'*';
+        if (word == L"/" || word == L"÷" || word == L"разделить" || word == L"делить") return L'/';
+        return 0;
+    };
+    double lhs = 0, rhs = 0;
+    wchar_t operation = 0;
+    int numbers = 0;
+    for (const auto& t : tokens) {
+        double value = 0;
+        if (number(t, value)) {
+            if (numbers == 0) lhs = value;
+            else if (numbers == 1) rhs = value;
+            ++numbers;
+        } else if (!operation) {
+            operation = op(t);
+        }
+    }
+    if (numbers != 2 || !operation) return false;
+    double answer = 0;
+    if (operation == L'+') answer = lhs + rhs;
+    else if (operation == L'-') answer = lhs - rhs;
+    else if (operation == L'*') answer = lhs * rhs;
+    else { if (rhs == 0) { result = L"На ноль делить нельзя."; return true; } answer = lhs / rhs; }
+    std::wstring a = std::to_wstring(lhs), b = std::to_wstring(rhs), c = std::to_wstring(answer);
+    auto clean = [](std::wstring& n) { while (n.find(L'.') != std::wstring::npos && !n.empty() && n.back() == L'0') n.pop_back(); if (!n.empty() && n.back() == L'.') n.pop_back(); };
+    clean(a); clean(b); clean(c);
+    result = a + L" " + std::wstring(1, operation) + L" " + b + L" = " + c + L".";
+    return true;
 }
 
 static bool LaunchStartMenuShortcut(const std::wstring& appName) {
@@ -561,6 +619,13 @@ bool AiBrain::ProcessSpeech(const std::wstring& userSpeech, std::wstring& outRep
         return true;
     }
 
+    std::wstring mathReply;
+    if (TrySimpleArithmetic(text, mathReply)) {
+        outReply = mathReply;
+        AiMemory::Instance().AddDialogHistory(userSpeech, outReply);
+        return true;
+    }
+
     // 1. GENERAL MEMORY: REMEMBERING & RECALLING
     if (text.find(L"что ты помнишь") != std::wstring::npos || text.find(L"что ты знаешь обо мне") != std::wstring::npos ||
         text.find(L"твоя память") != std::wstring::npos || text.find(L"вспомни всё") != std::wstring::npos) {
@@ -791,181 +856,25 @@ bool AiBrain::ProcessSpeech(const std::wstring& userSpeech, std::wstring& outRep
 }
 
 std::wstring AiBrain::GenerateConversationalReply(const std::wstring& text) {
-    std::wstring t = text;
-    for (auto& ch : t) ch = (wchar_t)towlower(ch);
+    std::wstring systemPrompt = L"Ты Свин — голосовой помощник на компьютере пользователя. Понимай естественную русскую речь, отвечай по существу, без заготовленных приветствий, кратко и без Markdown, чтобы ответ можно было произнести вслух. Решай простые задачи и объясняй ход ответа только если попросили. Для Доты учитывай переданный текущий драфт и предлагай героя только из переданного списка доступных кандидатов; назови конкретный пик и коротко объясни почему. Не выдумывай, какие герои видны, если список не передан.";
+    if (AiMemory::Instance().PrefersCasual()) systemPrompt += L" Общайся неформально и на «ты», подстраивайся под разговорную манеру пользователя.";
+    if (AiMemory::Instance().PrefersConcise()) systemPrompt += L" Пользователь предпочитает очень короткие ответы.";
 
-    std::wstring name = ConfigManager::Get().playerName;
-    if (name.empty()) name = L"братуха";
-
-    // 1. What are you doing / occupation
-    if (t.find(L"что делаешь") != std::wstring::npos || t.find(L"чем занят") != std::wstring::npos ||
-        t.find(L"чем занимаешься") != std::wstring::npos || t.find(L"че делаешь") != std::wstring::npos) {
-        static const wchar_t* replies[] = {
-            L"Сижу на чилле, держу мьюинг, слежу за твоим экраном и готов помочь по первому зову!",
-            L"Фармлю позитивный вайб, сканирую пространство и прикрываю твою спину, братуха!",
-            L"Контролирую обстановку и наслаждаюсь жизнью. Ты как сам?"
-        };
-        return replies[rand() % 3];
+    std::wstring context;
+    auto history = AiMemory::Instance().GetRecentHistory(5);
+    for (const auto& item : history) {
+        context += L"Пользователь: " + item.userQuery + L"\nСвин: " + item.pigResponse + L"\n";
     }
-
-    // 2. How are you / mood
-    if (t.find(L"как дела") != std::wstring::npos || t.find(L"как сам") != std::wstring::npos ||
-        t.find(L"че как") != std::wstring::npos || t.find(L"как настроение") != std::wstring::npos) {
-        static const wchar_t* replies[] = {
-            L"Дела — чиназес! Газяву попиваю, настроение боевое. А у тебя как день проходит?",
-            L"Всё в полном порядке! Полная готовность к великим свершениям. Как твои дела?",
-            L"На чилле и на позитиве! Заряжен на максимум. Что интересного расскажешь?"
-        };
-        return replies[rand() % 3];
+    std::string currentHero = HeroAdvisor::Instance().GetCurrentHeroName();
+    if (!currentHero.empty()) {
+        context += L"Текущий герой пользователя в Доте: " + Utf8ToWide(currentHero) + L".\n";
     }
-
-    // 3. Origin / Who are you / Why pig
-    if (t.find(L"почему свин") != std::wstring::npos || t.find(L"почему свинья") != std::wstring::npos ||
-        t.find(L"откуда ты") != std::wstring::npos) {
-        return L"Я легендарный свин-механик из Bad Piggies! Прокачал нейросети, выучил компьютер и теперь помогаю тебе во всем.";
+    context += HeroAdvisor::Instance().GetDraftContext();
+    std::wstring userPrompt = context + L"Последняя реплика пользователя: " + text;
+    if (!LocalAiEngine::Instance().IsModelInstalled()) {
+        VoiceAssistant::Instance().NotifyStatus(L"Первый запуск: загружаю бесплатную локальную модель ИИ размером около 563 мегабайт. Это займёт несколько минут; нужен интернет только для этой загрузки.");
     }
-    if (t.find(L"кто ты") != std::wstring::npos || t.find(L"что ты") != std::wstring::npos ||
-        t.find(L"ты кто") != std::wstring::npos) {
-        return L"Я твой персональный ИИ-ассистент Свин! Помню твои команды, помогаю на компе, даю советы и всегда на твоей стороне.";
-    }
-
-    // 4. Real AI / Neural net
-    if (t.find(L"ты настоящий ии") != std::wstring::npos || t.find(L"ты нейросеть") != std::wstring::npos ||
-        t.find(L"ты робот") != std::wstring::npos || t.find(L"ты бот") != std::wstring::npos) {
-        return L"Абсолютно! У меня нейросетевой слух на Vosk, долговременная память на диске и алгоритмы мгновенного понимания твоих команд.";
-    }
-
-    // 5. Questions about science / philosophy
-    if (t.find(L"почему небо голубое") != std::wstring::npos) {
-        return L"Это рэлеевское рассеяние света! Короткие синие волны солнечного спектра рассеиваются в атмосфере сильнее всего. Вот такой я умный свин-ученый!";
-    }
-    if (t.find(L"в чем смысл жизни") != std::wstring::npos || t.find(L"смысл жизни") != std::wstring::npos) {
-        return L"Находить кайф в каждом дне, быть на чилле с близкими, радоваться победам и не париться по мелочам, братан!";
-    }
-
-    // 6. Facts & Trivia
-    if (t.find(L"расскажи факт") != std::wstring::npos || t.find(L"интересный факт") != std::wstring::npos ||
-        t.find(L"факт") != std::wstring::npos) {
-        static const wchar_t* facts[] = {
-            L"Интересный факт: свиньи обладают великолепным интеллектом и способны играть в видеоигры с помощью джойстика! Так что я в Доте вполне органичен.",
-            L"Знаешь ли ты, что в космосе царит абсолютная тишина, потому что там нет воздуха для распространения звуковых волн?",
-            L"Факт дня: человеческий мозг генерирует около 20 ватт электрической энергии — этого хватило бы, чтобы питать светодиодную лампочку!",
-            L"Интересный факт: осьминоги имеют целых три сердца и синюю кровь на основе меди!"
-        };
-        return facts[rand() % 4];
-    }
-
-    // 7. Stories, Horror Stories & Creepypastas
-    if (t.find(L"страшилк") != std::wstring::npos || t.find(L"страшную истор") != std::wstring::npos ||
-        t.find(L"испугай") != std::wstring::npos || t.find(L"ужастик") != std::wstring::npos) {
-        static const wchar_t* scaryStories[] = {
-            L"Слушай страшилку на ночь: 55-я минута, байбека нет, ты фармишь лес... и тут прямо из тумана войны под BKB вылетает Пудж с шестью тарасками! Хук, ульт — и трон падает!",
-            L"Самый страшный кошмар дотера: ты нажимаешь БКБ, а тебя дизейблят прямо сквозь него, и твоя команда просто молча смотрит, как тебя разбирают на части! Бррр!",
-            L"Криповая история: сидишь ты в темноте в два часа ночи, в наушниках тишина... и вдруг скрипучий голос шепчет: Fresh Meat! И звон цепей прямо за твоим креслом..."
-        };
-        return scaryStories[rand() % 3];
-    }
-    if (t.find(L"расскажи историю") != std::wstring::npos || t.find(L"байку") != std::wstring::npos) {
-        static const wchar_t* stories[] = {
-            L"Однажды в Bad Piggies мы построили ракету из трех деревянных ящиков и вантуза. Думали долететь до яиц, а прилетели прямиком в Доту на мид! Теперь тут и обосновались.",
-            L"Был случай: решили мы с птицами устроить перемирие за пиццей. В итоге они съели сыр, мы съели коробку, но разошлись абсолютными друзьями на чилле!"
-        };
-        return stories[rand() % 2];
-    }
-
-    // 7.5. Dota 2 In-Game Timers & Mechanics (Lotus, Runes, Roshan, Tormentor, Neutrals)
-    if (t.find(L"лотус") != std::wstring::npos) {
-        return L"В Доте лотусы появляются в прудах каждые 3 минуты (начиная с 3:00, затем 6:00, 9:00 и далее). В Турбо режиме — каждые полторы минуты (с 1:30)! Беги лутать!";
-    }
-    if (t.find(L"мудрост") != std::wstring::npos || t.find(L"виздом") != std::wstring::npos) {
-        return L"Руны мудрости появляются каждые 7 минут: на 7:00, 14:00, 21:00, 28:00 и далее у баз команд! Не отдавай врагам халявный опыт.";
-    }
-    if (t.find(L"терзател") != std::wstring::npos || t.find(L"торментор") != std::wstring::npos) {
-        return L"Терзатель появляется ровно на 20-й минуте матча! Возрождается ровно через 10 минут после убийства и дает шард союзнику.";
-    }
-    if (t.find(L"рошан") != std::wstring::npos) {
-        return L"Рошан возрождается случайно в промежутке от 8 до 11 минут после смерти! Днём сидит в логове Света снизу справа, ночью — у Тьмы сверху слева.";
-    }
-    if (t.find(L"нейтрал") != std::wstring::npos || t.find(L"тир 1") != std::wstring::npos || t.find(L"тир 2") != std::wstring::npos) {
-        return L"Тайминги нейтралок: Тир 1 — 7 минута, Тир 2 — 17 минута, Тир 3 — 27 минута, Тир 4 — 37 минута, Тир 5 — 60 минута!";
-    }
-    if (t.find(L"рун") != std::wstring::npos) {
-        return L"Руны воды на реке на 2:00 и 4:00. Активные руны — каждые 2 минуты начиная с 6:00. Баунти руны — каждые 4 минуты, а руны мудрости — каждые 7 минут!";
-    }
-
-    // 8. Advice / Boredom
-    if (t.find(L"что мне делать") != std::wstring::npos || t.find(L"что посоветуешь") != std::wstring::npos ||
-        t.find(L"скучно") != std::wstring::npos) {
-        static const wchar_t* advices[] = {
-            L"Можешь заварить горячего чаю, включить интересное видео или развалить партию в любимой игре. Главное — кайфовать от момента!",
-            L"Предлагаю сделать легкую разминку, выпить стакан воды и заняться тем, что давно откладывал. Ты со всем справишься!",
-            L"Сделай что-нибудь для души: посмотри фильм, пообщайся со мной или придумай крутую идею. Я всегда поддержу!"
-        };
-        return advices[rand() % 3];
-    }
-
-    // 9. Emotional support / Tired / Tilt
-    if (t.find(L"мне грустно") != std::wstring::npos || t.find(L"я устал") != std::wstring::npos ||
-        t.find(L"тильт") != std::wstring::npos || t.find(L"плохо") != std::wstring::npos) {
-        return L"Братуха, выдохни. Жизнь переменчива — бывают взлеты и падения, но после спада всегда идет мощный подъем. Я рядом, держись!";
-    }
-
-    // 10. Praise / Compliments
-    if (t.find(L"похвали меня") != std::wstring::npos || t.find(L"я молодец") != std::wstring::npos ||
-        t.find(L"я красава") != std::wstring::npos) {
-        return L"Ты просто гигачад и абсолютный чемпион, " + name + L"! Делаешь вещи красиво и уверенно. Горжусь тобой!";
-    }
-    if (t.find(L"поругай меня") != std::wstring::npos) {
-        return L"Так, ну-ка соберись! Хватит прокрастинировать, вставай и покажи всем, кто здесь главный босс!";
-    }
-
-    // 11. Food advice
-    if (t.find(L"что покушать") != std::wstring::npos || t.find(L"что поесть") != std::wstring::npos ||
-        t.find(L"хочу есть") != std::wstring::npos) {
-        return L"Дубайский шоколад с фисташковой пастой катаифи или сочное ведерко из КФС на 52 Санкт-Петербург! Настоящая еда чемпионов.";
-    }
-
-    // 12. Friendship
-    if (t.find(L"ты меня любишь") != std::wstring::npos || t.find(L"мы друзья") != std::wstring::npos ||
-        t.find(L"ты мой друг") != std::wstring::npos) {
-        return L"Конечно, родной! Мы с тобой неразлучный дуэт. Всегда прикрою твою спину в любой ситуации!";
-    }
-
-    // 13. Favorite Hero
-    if (t.find(L"любимый герой") != std::wstring::npos) {
-        return L"Пудж — это святое, но уважаю ещё Свена за физическую мощь и Снайпера за чилловый отстрел издалека!";
-    }
-
-    // 14. Sleep / Morning
-    if (t.find(L"спокойной ночи") != std::wstring::npos || t.find(L"я спать") != std::wstring::npos) {
-        return L"Спокойной ночи, братишка! Отдыхай, восстанавливай силы, завтра новый отличный день.";
-    }
-    if (t.find(L"доброе утро") != std::wstring::npos) {
-        return L"Доброе утро, сигма! Заряжайся кофе или газявой, день обещает быть легендарным!";
-    }
-
-    // 15. Movies / Weather
-    if (t.find(L"фильм") != std::wstring::npos || t.find(L"кино") != std::wstring::npos) {
-        return L"Глянь хорошую фантастику, детектив с закрученным сюжетом или легендарную комедию под вкусняшки!";
-    }
-    if (t.find(L"погода") != std::wstring::npos || t.find(L"на улице") != std::wstring::npos) {
-        return L"Главное — чтобы в душе было солнечно и тепло, а за окном любая погода сойдет!";
-    }
-
-    // 16. Gratitude
-    if (t.find(L"спасибо") != std::wstring::npos || t.find(L"красава") != std::wstring::npos ||
-        t.find(L"от души") != std::wstring::npos || t.find(L"молодец") != std::wstring::npos) {
-        return L"Всегда пожалуйста, родной! Свин работает для тебя на все 100%. Обращайся!";
-    }
-
-    // 17. General Intelligent Conversational Fallbacks
-    static const wchar_t* creativeFallbacks[] = {
-        L"Базаришь, братуха! Полностью с тобой согласен. Мы на чилле и держим планку!",
-        L"Интересная мысль! Я записал себе в нейросеть. Готов дальше общаться и помогать во всем.",
-        L"Понял тебя с полуслова, родной! Я всегда на связи — спрашивай, командуй, всё сделаю.",
-        L"Звучит как план чемпиона! Главное не тильтовать и уверенно двигаться вперед.",
-        L"Харизматично сказано! Свин одобряет. Давай покажем всем настоящий мастер-класс!"
-    };
-    int idx = rand() % 5;
-    return creativeFallbacks[idx];
+    std::wstring answer;
+    if (LocalAiEngine::Instance().Generate(systemPrompt, userPrompt, answer)) return answer;
+    return L"Не получилось запустить локальный ИИ. Проверь подключение к интернету для первой загрузки модели и повтори вопрос.";
 }

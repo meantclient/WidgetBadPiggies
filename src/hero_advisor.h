@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <mutex>
 
 struct BuildItem {
     std::wstring nameRu;
@@ -67,6 +68,8 @@ public:
 
     std::string GetCurrentHeroName() const { return currentHeroName_; }
     std::wstring GetDetectedLane() const { return detectedLane_; }
+    void UpdateDraftContext(const std::wstring& context, const std::wstring& pickableHeroes);
+    std::wstring GetDraftContext() const;
 
     bool HasItem(const BuildItem& item);
     HeroBuildMeta FindHeroMeta(const std::string& heroName);
@@ -93,6 +96,9 @@ private:
     int lastNotifiedLevel_ = 0;
 
     std::map<std::string, HeroBuildMeta> metaDatabase_;
+    mutable std::mutex draftMutex_;
+    std::wstring draftContext_;
+    std::wstring pickableHeroes_;
 
     // 10,000+ Non-repeating Joke Engine state
     std::vector<int> jokeQueue_;

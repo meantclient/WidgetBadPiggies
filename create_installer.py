@@ -5,6 +5,8 @@ import zipfile
 import shutil
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+AI_RUNTIME_ZIP = os.path.join(BASE_DIR, "third_party", "llama-b12248-bin-win-cpu-x64.zip")
+AI_RUNTIME_DIR = os.path.join(BASE_DIR, "llama")
 PAYLOAD_BIN = os.path.join(BASE_DIR, "payload.bin")
 DESKTOP_EXE = os.path.join(BASE_DIR, "BadPiggiesSetup.exe")
 DESKTOP_ZIP_SETUP = os.path.join(BASE_DIR, "BadPiggiesSetup.zip")
@@ -28,6 +30,14 @@ for f in files_to_pack:
     if os.path.exists(p):
         all_entries.append((p, f))
 
+data_dir = os.path.join(BASE_DIR, "data")
+if os.path.isdir(data_dir):
+    for root, dirs, files in os.walk(data_dir):
+        for f in files:
+            full_p = os.path.join(root, f)
+            rel_p = os.path.relpath(full_p, BASE_DIR)
+            all_entries.append((full_p, rel_p))
+
 assets_dir = os.path.join(BASE_DIR, "assets")
 for root, dirs, files in os.walk(assets_dir):
     for f in files:
@@ -44,6 +54,27 @@ if os.path.exists(model_dir):
             all_entries.append((full_p, rel_p))
 
 print(f"Total files to bundle: {len(all_entries)}")
+
+# Bundle the small CPU inference runtime. The larger language model is downloaded
+# and SHA-256 verified only when the user first asks for an open-ended AI reply.
+if os.path.isfile(AI_RUNTIME_ZIP):
+    os.makedirs(AI_RUNTIME_DIR, exist_ok=True)
+    with zipfile.ZipFile(AI_RUNTIME_ZIP, "r") as runtime:
+        for name in runtime.namelist():
+            if name.endswith("/"):
+                continue
+            safe_name = os.path.basename(name)
+            if not safe_name:
+                continue
+            target = os.path.join(AI_RUNTIME_DIR, safe_name)
+            with runtime.open(name) as source, open(target, "wb") as output:
+                shutil.copyfileobj(source, output)
+    for root, dirs, files in os.walk(AI_RUNTIME_DIR):
+        for f in files:
+            full_p = os.path.join(root, f)
+            rel_p = os.path.relpath(full_p, BASE_DIR)
+            all_entries.append((full_p, rel_p))
+    print(f"Bundled local AI runtime: {len(runtime.namelist())} files")
 
 with open(PAYLOAD_BIN, "wb") as out:
     out.write(b"BPKG")

@@ -24,6 +24,7 @@ public:
     bool IsRunning() const { return running_.load(); }
     bool IsAwake() const;
     bool IsUsingVosk() const { return usingVosk_.load(); }
+    void NotifyStatus(const std::wstring& text);
 
     void ProcessRecognizedText(const std::wstring& text, bool isFinal = true);
 

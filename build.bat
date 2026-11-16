@@ -25,7 +25,7 @@ echo Compiling resources...
 echo.
 echo Compiling source files with UTF-8 support and embedded icon...
 cl.exe /nologo /O2 /W3 /std:c++17 /EHsc /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /Iinclude /Isrc ^
-    src\main.cpp src\config.cpp src\dota_gsi.cpp src\overlay.cpp src\vignette.cpp src\settings_gui.cpp src\dota_settings_gui.cpp src\dota_welcome.cpp src\hero_advisor.cpp src\vosk_engine.cpp src\voice_assistant.cpp src\voice.cpp src\updater.cpp src\tray.cpp src\ai_brain.cpp ^
+    src\main.cpp src\config.cpp src\dota_gsi.cpp src\overlay.cpp src\vignette.cpp src\settings_gui.cpp src\dota_settings_gui.cpp src\dota_welcome.cpp src\hero_advisor.cpp src\vosk_engine.cpp src\voice_assistant.cpp src\voice.cpp src\updater.cpp src\tray.cpp src\local_ai.cpp src\ai_brain.cpp ^
     app.res ^
     /link /OUT:BadPiggiesDotaWidget.exe ^
     user32.lib gdi32.lib gdiplus.lib ws2_32.lib shell32.lib advapi32.lib shlwapi.lib winmm.lib comctl32.lib uxtheme.lib ole32.lib urlmon.lib wininet.lib ^

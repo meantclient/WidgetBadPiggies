@@ -4,3 +4,6 @@
 out.txt
 test_sapi.exe
 gsi_log.txt
+llama/
+tools/ai_dist/
+*.gguf

@@ -124,6 +124,10 @@ bool VoiceAssistant::IsAwake() const {
     return (std::chrono::steady_clock::now() < awakeUntil_);
 }
 
+void VoiceAssistant::NotifyStatus(const std::wstring& text) {
+    DispatchVoiceAdvice(text);
+}
+
 std::vector<std::pair<std::wstring, std::wstring>> VoiceAssistant::GetAvailableMicrophones() {
     std::vector<std::pair<std::wstring, std::wstring>> result;
     auto devList = VoskEngine::GetInputDevices();
@@ -306,35 +310,19 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText, bool isF
     std::wstring wakeWord = ConfigManager::Get().assistantWakeWord;
     for (auto& ch : wakeWord) ch = (wchar_t)towlower(ch);
 
-    bool hasWakeWord = false;
-    if (!wakeWord.empty() && text.find(wakeWord) != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"свин") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"свен") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"свинь") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"хрю") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"поросен") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"пиг") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"пего") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"хряк") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"боров") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"брат") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"братух") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"братан") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"бро") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"эй") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"помощник") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"ассистент") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"слушай") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"ты тут") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"ты здесь") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"слышишь") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"съем") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"своём") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"pig") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"svin") != std::wstring::npos) hasWakeWord = true;
+    bool hasWakeWord = (!wakeWord.empty() && text.find(wakeWord) != std::wstring::npos) ||
+        text.find(L"свин") != std::wstring::npos || text.find(L"svin") != std::wstring::npos;
 
     // Switch out of wake-word-only recognition as soon as the trigger is heard.
     if (hasWakeWord) {
+        if (isAwakeWindow) {
+            awakeUntil_ = now;
+            VoskEngine::Instance().SetConversationMode(false);
+            VoskEngine::Instance().ResetRecognizer();
+            s_lastTriggerTick = nowTick;
+            DispatchVoiceAdvice(L"Хорошо, заканчиваю разговор. Скажи «Свин», когда понадоблюсь.");
+            return;
+        }
         awakeUntil_ = now + std::chrono::seconds(14);
         VoskEngine::Instance().SetConversationMode(true);
     }

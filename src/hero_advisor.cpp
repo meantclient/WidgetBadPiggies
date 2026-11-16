@@ -21,6 +21,18 @@ HeroAdvisor::HeroAdvisor() {
 
 HeroAdvisor::~HeroAdvisor() {}
 
+void HeroAdvisor::UpdateDraftContext(const std::wstring& context, const std::wstring& pickableHeroes) {
+    std::lock_guard<std::mutex> lock(draftMutex_);
+    draftContext_ = context;
+    pickableHeroes_ = pickableHeroes;
+}
+
+std::wstring HeroAdvisor::GetDraftContext() const {
+    std::lock_guard<std::mutex> lock(draftMutex_);
+    if (draftContext_.empty()) return L"";
+    return draftContext_ + L"\nКандидаты, которые сейчас доступны на экране выбора: " + pickableHeroes_ + L".\n";
+}
+
 void HeroAdvisor::InitHeroDatabase() {
     // 1. Razor
     {
