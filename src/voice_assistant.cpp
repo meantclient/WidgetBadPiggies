@@ -5,15 +5,51 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include "voice_assistant.h"
+#include "vosk_engine.h"
 #include "config.h"
 #include "hero_advisor.h"
 #include "overlay.h"
 #include "voice.h"
+#include "settings_gui.h"
+#include "ai_brain.h"
 #include <algorithm>
 #include <vector>
 #include <chrono>
 
 #pragma comment(lib, "ole32.lib")
+
+#define WM_VOICE_TRIGGER (WM_USER + 201)
+
+extern HWND g_hMsgWnd;
+
+static bool HasWord(const std::wstring& text, const std::wstring& word) {
+    size_t pos = 0;
+    while ((pos = text.find(word, pos)) != std::wstring::npos) {
+        bool leftOk = (pos == 0 || !iswalnum(text[pos - 1]));
+        bool rightOk = (pos + word.length() >= text.length() || !iswalnum(text[pos + word.length()]));
+        if (leftOk && rightOk) return true;
+        pos += word.length();
+    }
+    return false;
+}
+
+static void DispatchVoiceAdvice(const std::wstring& advice) {
+    FILE* fLog = _wfopen(L"voice_debug.log", L"a, ccs=UTF-8");
+    if (fLog) {
+        fwprintf(fLog, L"[DISPATCH] Advice: '%s' (g_hMsgWnd=%p)\n", advice.c_str(), g_hMsgWnd);
+        fclose(fLog);
+    }
+
+    // Update settings GUI in real time with the pig's answer
+    SettingsWindow::Instance().SetLastAnswerText(advice);
+
+    if (g_hMsgWnd) {
+        std::wstring* pCopy = new std::wstring(advice);
+        PostMessageW(g_hMsgWnd, WM_VOICE_TRIGGER, 0, (LPARAM)pCopy);
+    } else {
+        OverlayWindow::Instance().TriggerAdvice(advice);
+    }
+}
 
 VoiceAssistant& VoiceAssistant::Instance() {
     static VoiceAssistant instance;
@@ -31,13 +67,34 @@ bool VoiceAssistant::Start() {
     if (!ConfigManager::Get().enableVoiceAssistant) return false;
 
     running_.store(true);
-    listenThread_ = std::thread(&VoiceAssistant::ListeningThread, this);
+
+    // 1. Primary Engine: Vosk Speech Recognition (Offline Kaldi Russian Model)
+    VoskEngine::Instance().SetInputDevice(ConfigManager::Get().microphoneDevice);
+    bool voskOk = VoskEngine::Instance().StartListening([this](const std::wstring& text, bool isFinal) {
+        if (!text.empty()) {
+            this->ProcessRecognizedText(text, isFinal);
+        }
+    });
+
+    if (voskOk) {
+        usingVosk_.store(true);
+        return true;
+    }
+
+    // 2. Fallback Engine: Windows SAPI Inproc/Shared Recognizer
+    usingVosk_.store(false);
+    sapiThread_ = std::thread(&VoiceAssistant::SapiListeningThread, this);
     return true;
 }
 
 void VoiceAssistant::Stop() {
     if (!running_.load()) return;
     running_.store(false);
+
+    if (usingVosk_.load()) {
+        VoskEngine::Instance().StopListening();
+        usingVosk_.store(false);
+    }
 
     if (pAudio_) {
         pAudio_->SetState(SPAS_STOP, 0);
@@ -58,8 +115,8 @@ void VoiceAssistant::Stop() {
         pInprocRec_ = NULL;
     }
 
-    if (listenThread_.joinable()) {
-        listenThread_.join();
+    if (sapiThread_.joinable()) {
+        sapiThread_.join();
     }
 }
 
@@ -69,36 +126,16 @@ bool VoiceAssistant::IsAwake() const {
 
 std::vector<std::pair<std::wstring, std::wstring>> VoiceAssistant::GetAvailableMicrophones() {
     std::vector<std::pair<std::wstring, std::wstring>> result;
-    ISpObjectTokenCategory* pCat = nullptr;
-    if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectTokenCategory, NULL, CLSCTX_ALL, IID_ISpObjectTokenCategory, (void**)&pCat)) && pCat) {
-        if (SUCCEEDED(pCat->SetId(SPCAT_AUDIOIN, FALSE))) {
-            IEnumSpObjectTokens* pEnum = nullptr;
-            if (SUCCEEDED(pCat->EnumTokens(NULL, NULL, &pEnum)) && pEnum) {
-                ISpObjectToken* pToken = nullptr;
-                while (pEnum->Next(1, &pToken, NULL) == S_OK) {
-                    WCHAR* desc = nullptr;
-                    pToken->GetStringValue(NULL, &desc);
-                    WCHAR* pId = nullptr;
-                    pToken->GetId(&pId);
-                    if (desc && pId) {
-                        result.push_back({ std::wstring(desc), std::wstring(pId) });
-                    }
-                    if (desc) CoTaskMemFree(desc);
-                    if (pId) CoTaskMemFree(pId);
-                    pToken->Release();
-                }
-                pEnum->Release();
-            }
-        }
-        pCat->Release();
+    auto devList = VoskEngine::GetInputDevices();
+    for (const auto& dev : devList) {
+        result.push_back({ dev.first, dev.first });
     }
     return result;
 }
 
-void VoiceAssistant::ListeningThread() {
+void VoiceAssistant::SapiListeningThread() {
     CoInitialize(NULL);
 
-    // 1. Create Inproc Recognizer and connect chosen/default microphone via SPCAT_AUDIOIN token
     HRESULT hr = CoCreateInstance(CLSID_SpInprocRecognizer, NULL, CLSCTX_ALL, IID_ISpRecognizer, (void**)&pInprocRec_);
     if (SUCCEEDED(hr) && pInprocRec_) {
         bool audioSet = false;
@@ -107,7 +144,6 @@ void VoiceAssistant::ListeningThread() {
         ISpObjectTokenCategory* pCat = nullptr;
         if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectTokenCategory, NULL, CLSCTX_ALL, IID_ISpObjectTokenCategory, (void**)&pCat)) && pCat) {
             if (SUCCEEDED(pCat->SetId(SPCAT_AUDIOIN, FALSE))) {
-                // If a specific microphone device was selected in settings, find and use it
                 if (!targetMic.empty()) {
                     IEnumSpObjectTokens* pEnum = nullptr;
                     if (SUCCEEDED(pCat->EnumTokens(NULL, NULL, &pEnum)) && pEnum) {
@@ -131,7 +167,6 @@ void VoiceAssistant::ListeningThread() {
                     }
                 }
 
-                // Fallback to default system microphone
                 if (!audioSet) {
                     WCHAR* defaultId = nullptr;
                     if (SUCCEEDED(pCat->GetDefaultTokenId(&defaultId)) && defaultId) {
@@ -151,7 +186,6 @@ void VoiceAssistant::ListeningThread() {
             pCat->Release();
         }
 
-        // Fallback to SpMMAudioIn if token method wasn't set
         if (!audioSet) {
             HRESULT hrAudio = CoCreateInstance(CLSID_SpMMAudioIn, NULL, CLSCTX_ALL, IID_ISpAudio, (void**)&pAudio_);
             if (SUCCEEDED(hrAudio) && pAudio_) {
@@ -162,7 +196,6 @@ void VoiceAssistant::ListeningThread() {
         pInprocRec_->CreateRecoContext(&pRecoCtx_);
     }
 
-    // 2. If Inproc Recognizer failed, fallback to Shared Context
     if (!pRecoCtx_) {
         hr = CoCreateInstance(CLSID_SpSharedRecoContext, NULL, CLSCTX_ALL, IID_ISpRecoContext, (void**)&pRecoCtx_);
     }
@@ -180,89 +213,9 @@ void VoiceAssistant::ListeningThread() {
         return;
     }
 
-    // 3. Load dictation topic for broad listening
-    hr = pGrammar_->LoadDictation(NULL, SPLO_STATIC);
-    if (SUCCEEDED(hr)) {
-        pGrammar_->SetDictationState(SPRS_ACTIVE);
-    }
+    pGrammar_->LoadDictation(NULL, SPLO_STATIC);
+    pGrammar_->SetDictationState(SPRS_ACTIVE);
 
-    // 4. Register command grammar with Russian and phonetic/English words
-    SPSTATEHANDLE hInitial = NULL;
-    HRESULT hrRule = pGrammar_->GetRule(L"PigVoiceCommands", 1, SPRAF_TopLevel | SPRAF_Active, TRUE, &hInitial);
-    if (SUCCEEDED(hrRule) && hInitial != NULL) {
-        std::wstring customWake = ConfigManager::Get().assistantWakeWord;
-        for (auto& c : customWake) c = (wchar_t)towlower(c);
-
-        std::vector<std::wstring> phrases = {
-            // Wake words (Russian, phonetic, translit)
-            L"свин", L"пиг", L"свинка", L"хряк", L"боров", L"братуха", L"братан",
-            L"pig", L"svin", L"sveen", L"spin", L"swine", L"brother", L"bro",
-
-            // Greetings
-            L"свин здарова", L"свин привет", L"свин салам", L"пиг здарова", L"пиг привет",
-            L"здарова братан", L"здарова братух", L"здарова свин", L"привет свин",
-            L"здарова", L"привет", L"салам", L"ку", L"хай",
-            L"svin zdarova", L"pig hello", L"pig hi", L"hello", L"hi",
-            L"zdarova", L"privet", L"salam", L"the rover", L"starova",
-
-            // How are you
-            L"свин как дела", L"свин как сам", L"свин че как", L"как дела свин", L"как сам свин",
-            L"как дела", L"как сам", L"че как", L"как настроение",
-            L"svin kak dela", L"pig how are you", L"how are you", L"whats up", L"cock dela",
-
-            // Jokes & humor
-            L"свин пошути", L"свин расскажи шутку", L"свин анекдот", L"пошути свин",
-            L"пиг пошути", L"пиг анекдот", L"расскажи шутку", L"пошути", L"анекдот",
-            L"svin shutka", L"svin anekdot", L"pig joke", L"tell a joke", L"joke", L"shootka",
-
-            // What to buy
-            L"свин что купить", L"свин что мне купить", L"свин закуп", L"свин шмот", L"свин какой закуп",
-            L"пиг что купить", L"пиг что мне купить", L"пиг закуп", L"пиг шмот",
-            L"что купить", L"что мне купить", L"какой закуп", L"закуп", L"шмот",
-            L"pig buy", L"svin buy", L"what to buy", L"chto kupit", L"sto kupit",
-
-            // What to skill
-            L"свин что качать", L"свин что мне качать", L"свин скилл", L"свин какой скилл",
-            L"пиг что качать", L"пиг что мне качать", L"пиг скилл",
-            L"что качать", L"что мне качать", L"какой скилл", L"скиллы",
-            L"pig skill", L"svin skill", L"what to skill", L"chto kachat",
-
-            // Thanks & praise
-            L"свин красава", L"свин спасибо", L"свин от души", L"свин молодец", L"свин хорош",
-            L"пиг красава", L"пиг спасибо", L"красава свин", L"спасибо свин",
-            L"красава", L"спасибо", L"от души", L"хорош", L"молодец",
-            L"krasava", L"spasibo", L"thanks", L"thank you", L"good job",
-
-            // Anti-tilt & help
-            L"свин что делать", L"свин мы горим", L"свин мы проиграем", L"мы горим", L"мы проиграем", L"тильт",
-            L"chto delat", L"help",
-
-            // Personality style switch
-            L"свин токсик", L"свин пожестче", L"свин прожарь", L"свин по-братски", L"свин спокойнее"
-        };
-
-        if (!customWake.empty()) {
-            phrases.push_back(customWake);
-            phrases.push_back(customWake + L" что купить");
-            phrases.push_back(customWake + L" что качать");
-            phrases.push_back(customWake + L" как дела");
-            phrases.push_back(customWake + L" пошути");
-            phrases.push_back(customWake + L" анекдот");
-            phrases.push_back(customWake + L" здарова");
-            phrases.push_back(customWake + L" красава");
-            phrases.push_back(customWake + L" buy");
-            phrases.push_back(customWake + L" skill");
-            phrases.push_back(customWake + L" joke");
-        }
-
-        for (const auto& phrase : phrases) {
-            pGrammar_->AddWordTransition(hInitial, NULL, phrase.c_str(), L" ", SPWT_LEXICAL, 1.0f, NULL);
-        }
-        pGrammar_->Commit(0);
-        pGrammar_->SetRuleState(L"PigVoiceCommands", NULL, SPRS_ACTIVE);
-    }
-
-    // Set interest for both high-confidence and hypothesis/false recognition (to catch accented speech!)
     pRecoCtx_->SetInterest(
         SPFEI(SPEI_RECOGNITION) | SPFEI(SPEI_FALSE_RECOGNITION) | SPFEI(SPEI_HYPOTHESIS),
         SPFEI(SPEI_RECOGNITION) | SPFEI(SPEI_FALSE_RECOGNITION) | SPFEI(SPEI_HYPOTHESIS)
@@ -279,7 +232,6 @@ void VoiceAssistant::ListeningThread() {
                 ULONG fetched = 0;
                 while (pRecoCtx_->GetEvents(1, &spEvent, &fetched) == S_OK && fetched > 0) {
                     if (spEvent.eEventId == SPEI_RECOGNITION || spEvent.eEventId == SPEI_FALSE_RECOGNITION) {
-                        // Drop speech input while TTS is actively speaking so pig never hears himself
                         if (VoiceService::Instance().IsSpeaking()) {
                             continue;
                         }
@@ -288,7 +240,7 @@ void VoiceAssistant::ListeningThread() {
                             WCHAR* pwszText = NULL;
                             if (SUCCEEDED(pResult->GetText(SP_GETWHOLEPHRASE, SP_GETWHOLEPHRASE, TRUE, &pwszText, NULL))) {
                                 if (pwszText && wcslen(pwszText) > 0) {
-                                    ProcessRecognizedText(pwszText);
+                                    ProcessRecognizedText(pwszText, true);
                                     CoTaskMemFree(pwszText);
                                 }
                             }
@@ -318,21 +270,30 @@ void VoiceAssistant::ListeningThread() {
     CoUninitialize();
 }
 
-void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
+void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText, bool isFinal) {
+    FILE* fLog = _wfopen(L"voice_debug.log", L"a, ccs=UTF-8");
+    if (fLog) {
+        fwprintf(fLog, L"[RECOG] isFinal=%d text='%s'\n", isFinal, rawText.c_str());
+        fclose(fLog);
+    }
+
     std::wstring text = rawText;
     for (auto& ch : text) ch = (wchar_t)towlower(ch);
 
-    static DWORD s_lastTriggerTick = 0;
-    static DWORD s_lastTtsEndTick = 0;
-    DWORD nowTick = GetTickCount();
+    // Update real-time status in Settings window so user sees microphone is hearing live
+    SettingsWindow::Instance().SetLastRecognizedText(rawText);
 
-    // 0. Drop processing if TTS is actively speaking or spoke within last 2.2 seconds!
-    // This stops the pig from listening to his own voice from the speakers and repeating!
-    if (VoiceService::Instance().IsSpeaking()) {
-        s_lastTtsEndTick = nowTick;
+    // CRITICAL: Only trigger actions on final recognition hypotheses!
+    // Partial hypotheses update the Settings UI status only so the pig never cuts the user off mid-sentence.
+    if (!isFinal) {
         return;
     }
-    if (nowTick - s_lastTtsEndTick < 2200) {
+
+    static DWORD s_lastTriggerTick = 0;
+    DWORD nowTick = GetTickCount();
+
+    // Debounce triggers: at least 800 ms between distinct voice responses
+    if (nowTick - s_lastTriggerTick < 800) {
         return;
     }
 
@@ -342,186 +303,252 @@ void VoiceAssistant::ProcessRecognizedText(const std::wstring& rawText) {
     std::wstring wakeWord = ConfigManager::Get().assistantWakeWord;
     for (auto& ch : wakeWord) ch = (wchar_t)towlower(ch);
 
-    // 1. Check Wake Word presence (Russian, English, and phonetic transliterations)
     bool hasWakeWord = false;
     if (!wakeWord.empty() && text.find(wakeWord) != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"свин") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"свен") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"свинь") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"хрю") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"поросен") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"пиг") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"свинка") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"пего") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"хряк") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"боров") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"брат") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"братух") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"братан") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"бро") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"эй") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"помощник") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"ассистент") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"слушай") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"ты тут") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"ты здесь") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"слышишь") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"съем") != std::wstring::npos) hasWakeWord = true;
+    if (text.find(L"своём") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"pig") != std::wstring::npos) hasWakeWord = true;
     if (text.find(L"svin") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"spin") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"sveen") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"swine") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"seen") != std::wstring::npos) hasWakeWord = true;
-    if (text.find(L"swim") != std::wstring::npos) hasWakeWord = true;
 
-    // If pig was awakened recently (< 10 sec ago), he is actively listening without needing wake word!
-    bool canProceed = hasWakeWord || isAwakeWindow;
+    // Detect specific Intent / Meme
+    std::wstring intent = L"";
 
-    // Direct questions/intents always work even without wake word
-    if (text.find(L"что купить") != std::wstring::npos ||
-        text.find(L"что качать") != std::wstring::npos ||
-        text.find(L"пошути") != std::wstring::npos ||
-        text.find(L"анекдот") != std::wstring::npos ||
-        text.find(L"как дела") != std::wstring::npos ||
-        text.find(L"здарова") != std::wstring::npos ||
-        text.find(L"красава") != std::wstring::npos ||
-        text.find(L"купить") != std::wstring::npos ||
-        text.find(L"качать") != std::wstring::npos ||
-        text.find(L"buy") != std::wstring::npos ||
-        text.find(L"joke") != std::wstring::npos ||
-        text.find(L"rover") != std::wstring::npos) {
-        canProceed = true;
+    // TikTok 2026 Memes
+    if (text.find(L"чил") != std::wstring::npos || text.find(L"чем гай") != std::wstring::npos ||
+        text.find(L"чел гай") != std::wstring::npos || text.find(L"чиловый") != std::wstring::npos ||
+        text.find(L"chill") != std::wstring::npos || text.find(L"на чилле") != std::wstring::npos) {
+        intent = L"chill_guy";
+    }
+    else if (text.find(L"дубай") != std::wstring::npos || text.find(L"шоколад") != std::wstring::npos ||
+             text.find(L"катаифи") != std::wstring::npos || text.find(L"фисташк") != std::wstring::npos) {
+        intent = L"dubai_chocolate";
+    }
+    else if (text.find(L"босс") != std::wstring::npos || text.find(L"кфс") != std::wstring::npos ||
+             text.find(L"kfc") != std::wstring::npos || text.find(L"52") != std::wstring::npos ||
+             text.find(L"пятьдесят два") != std::wstring::npos) {
+        intent = L"kfc_boss";
+    }
+    else if (text.find(L"хомяк") != std::wstring::npos || text.find(L"тапай") != std::wstring::npos ||
+             text.find(L"тапать") != std::wstring::npos || text.find(L"хамстер") != std::wstring::npos ||
+             text.find(L"листинг") != std::wstring::npos || text.find(L"эйрдроп") != std::wstring::npos) {
+        intent = L"hamster";
+    }
+    else if (text.find(L"скибиди") != std::wstring::npos || text.find(L"туалет") != std::wstring::npos ||
+             text.find(L"доп доп") != std::wstring::npos || text.find(L"skibidi") != std::wstring::npos ||
+             text.find(L"брейнрот") != std::wstring::npos) {
+        intent = L"skibidi";
+    }
+    else if (text.find(L"сигма") != std::wstring::npos || text.find(L"фонк") != std::wstring::npos ||
+             text.find(L"sigma") != std::wstring::npos || text.find(L"phonk") != std::wstring::npos) {
+        intent = L"sigma";
+    }
+    else if (text.find(L"альтушк") != std::wstring::npos || text.find(L"скуф") != std::wstring::npos ||
+             text.find(L"госуслуг") != std::wstring::npos || text.find(L"скуфидон") != std::wstring::npos) {
+        intent = L"altushka";
+    }
+    else if (text.find(L"пасхалк") != std::wstring::npos || text.find(L"медный бык") != std::wstring::npos ||
+             text.find(L"1488") != std::wstring::npos || text.find(L"вентилятор") != std::wstring::npos) {
+        intent = L"paskhalko";
+    }
+    else if (text.find(L"чиназес") != std::wstring::npos || text.find(L"саунтрес") != std::wstring::npos) {
+        intent = L"chinazes";
+    }
+    else if (text.find(L"мьюинг") != std::wstring::npos || text.find(L"джолайн") != std::wstring::npos ||
+             text.find(L"jawline") != std::wstring::npos || text.find(L"мьюинге") != std::wstring::npos) {
+        intent = L"mewing";
+    }
+    else if (text.find(L"тяжелый люкс") != std::wstring::npos || text.find(L"олд мани") != std::wstring::npos ||
+             text.find(L"люкс") != std::wstring::npos) {
+        intent = L"lux";
+    }
+    else if (text.find(L"бархатные тяги") != std::wstring::npos || text.find(L"тяги") != std::wstring::npos ||
+             text.find(L"кефтеме") != std::wstring::npos || text.find(L"фуфтыкели") != std::wstring::npos) {
+        intent = L"kefteme";
+    }
+    else if (text.find(L"1000 минус 7") != std::wstring::npos || text.find(L"тысяча минус семь") != std::wstring::npos ||
+             text.find(L"дед инсайд") != std::wstring::npos || text.find(L"гуль") != std::wstring::npos ||
+             text.find(L"dead inside") != std::wstring::npos) {
+        intent = L"dead_inside";
+    }
+    else if (text.find(L"тикток") != std::wstring::npos || text.find(L"тик ток") != std::wstring::npos ||
+             text.find(L"реки") != std::wstring::npos || text.find(L"мем") != std::wstring::npos ||
+             text.find(L"мэм") != std::wstring::npos) {
+        intent = L"tiktok";
+    }
+    else if (text.find(L"гойда") != std::wstring::npos) {
+        intent = L"goyda";
+    }
+    else if (text.find(L"виджет") != std::wstring::npos || text.find(L"дота") != std::wstring::npos) {
+        intent = L"greet";
+    }
+    // Gameplay & Assistant commands
+    else if (text.find(L"купить") != std::wstring::npos || text.find(L"закуп") != std::wstring::npos ||
+             text.find(L"предмет") != std::wstring::npos || text.find(L"шмот") != std::wstring::npos ||
+             text.find(L"buy") != std::wstring::npos) {
+        intent = L"buy";
+    }
+    else if (text.find(L"качать") != std::wstring::npos || text.find(L"вкачать") != std::wstring::npos ||
+             text.find(L"скилл") != std::wstring::npos || text.find(L"skill") != std::wstring::npos) {
+        intent = L"skill";
+    }
+    else if (text.find(L"шутк") != std::wstring::npos || text.find(L"пошут") != std::wstring::npos ||
+             text.find(L"анекдот") != std::wstring::npos || text.find(L"рофл") != std::wstring::npos ||
+             text.find(L"прикол") != std::wstring::npos) {
+        intent = L"joke";
+    }
+    else if (text.find(L"как дела") != std::wstring::npos || text.find(L"как сам") != std::wstring::npos ||
+             text.find(L"че как") != std::wstring::npos || text.find(L"как настроение") != std::wstring::npos) {
+        intent = L"howareyou";
+    }
+    else if (text.find(L"здаров") != std::wstring::npos || text.find(L"привет") != std::wstring::npos ||
+             text.find(L"салам") != std::wstring::npos || HasWord(text, L"ку") ||
+             HasWord(text, L"хай")) {
+        intent = L"greet";
+    }
+    else if (text.find(L"красав") != std::wstring::npos || text.find(L"спасиб") != std::wstring::npos ||
+             text.find(L"от души") != std::wstring::npos || text.find(L"хорош") != std::wstring::npos ||
+             text.find(L"молодец") != std::wstring::npos) {
+        intent = L"thanks";
+    }
+    else if (text.find(L"горим") != std::wstring::npos || text.find(L"проигра") != std::wstring::npos ||
+             text.find(L"слива") != std::wstring::npos || text.find(L"тильт") != std::wstring::npos) {
+        intent = L"tilt";
+    }
+    else if (text.find(L"токсик") != std::wstring::npos || text.find(L"пожестче") != std::wstring::npos ||
+             text.find(L"прожар") != std::wstring::npos) {
+        intent = L"toxic_on";
+    }
+    else if (text.find(L"кто ты") != std::wstring::npos || text.find(L"кто это") != std::wstring::npos ||
+             text.find(L"ты кто") != std::wstring::npos || text.find(L"что ты") != std::wstring::npos) {
+        intent = L"whoareyou";
+    }
+    else if (text.find(L"слышишь") != std::wstring::npos || text.find(L"слышно") != std::wstring::npos ||
+             text.find(L"проверка") != std::wstring::npos || text.find(L"раз два") != std::wstring::npos ||
+             text.find(L"тест") != std::wstring::npos) {
+        intent = L"hearing_check";
+    }
+    else if (text.find(L"ты тут") != std::wstring::npos || text.find(L"ты здесь") != std::wstring::npos) {
+        intent = L"whereareyou";
+    }
+    else if (text.find(L"по-братски") != std::wstring::npos || text.find(L"спокойн") != std::wstring::npos ||
+             text.find(L"хватит") != std::wstring::npos) {
+        intent = L"toxic_off";
     }
 
-    if (!canProceed) return;
+    // 1. Check AI Brain (Smart Playlist with Memory, System automation, Media control, Natural Conversation)
+    bool isDirectAiCommand = (text.find(L"плейлист") != std::wstring::npos ||
+                              text.find(L"плей лист") != std::wstring::npos ||
+                              text.find(L"музык") != std::wstring::npos ||
+                              text.find(L"песн") != std::wstring::npos ||
+                              text.find(L"трек") != std::wstring::npos ||
+                              text.find(L"пауза") != std::wstring::npos ||
+                              text.find(L"громче") != std::wstring::npos ||
+                              text.find(L"тише") != std::wstring::npos ||
+                              text.find(L"доту") != std::wstring::npos ||
+                              text.find(L"стим") != std::wstring::npos ||
+                              text.find(L"запомни") != std::wstring::npos ||
+                              text.find(L"помнишь") != std::wstring::npos ||
+                              text.find(L"спотифай") != std::wstring::npos ||
+                              text.find(L"яндекс") != std::wstring::npos);
 
-    // Debounce triggers so rapid speech doesn't duplicate responses
-    if (nowTick - s_lastTriggerTick < 2600) return;
-    s_lastTtsEndTick = nowTick + 3500;
+    // If an explicit AI command was uttered OR wake word / active dialog window is present:
+    if (isDirectAiCommand || ((hasWakeWord || isAwakeWindow) && intent.empty())) {
+        std::wstring aiReply;
+        if (AiBrain::Instance().ProcessSpeech(text, aiReply)) {
+            s_lastTriggerTick = nowTick;
+            awakeUntil_ = now + std::chrono::seconds(14);
+            VoskEngine::Instance().ResetRecognizer();
+            DispatchVoiceAdvice(aiReply);
+            return;
+        }
+    }
 
-    // Refresh active listening window for 10 seconds!
-    awakeUntil_ = now + std::chrono::seconds(10);
-
-    // Intent 1: Switch toxic mode on / off dynamically by voice!
-    if (text.find(L"токсик") != std::wstring::npos ||
-        text.find(L"пожестче") != std::wstring::npos ||
-        text.find(L"прожар") != std::wstring::npos ||
-        text.find(L"toxic") != std::wstring::npos) {
+    // 2. If an explicit intent is matched:
+    if (!intent.empty()) {
         s_lastTriggerTick = nowTick;
-        ConfigManager::Get().enableToxicMode = true;
-        ConfigManager::Save();
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(L"Режим жесткой прожарки включен! Теперь держись, пощады не будет, за каждый косяк спрошу!");
+        awakeUntil_ = now + std::chrono::seconds(12);
+        VoskEngine::Instance().ResetRecognizer();
+
+        if (intent == L"buy") { AskAdvice(0); return; }
+        if (intent == L"skill") { AskAdvice(1); return; }
+        if (intent == L"joke") { DispatchVoiceAdvice(HeroAdvisor::Instance().GetJoke()); return; }
+        if (intent == L"howareyou") { DispatchVoiceAdvice(HeroAdvisor::Instance().GetHowAreYou()); return; }
+        if (intent == L"whoareyou") { DispatchVoiceAdvice(L"Я твой верный свин-помощник! Слежу за твоей каткой в Доте и всегда на чилле!"); return; }
+        if (intent == L"hearing_check") { DispatchVoiceAdvice(L"Слышу тебя громко и четко, братуха! Микрофон в идеале, я на связи!"); return; }
+        if (intent == L"whereareyou") { DispatchVoiceAdvice(L"Я тут, братан! Готов разваливать трон и тапать хомяка!"); return; }
+        if (intent == L"greet") { DispatchVoiceAdvice(HeroAdvisor::Instance().GetFriendlyChat()); return; }
+        if (intent == L"thanks") { DispatchVoiceAdvice(HeroAdvisor::Instance().GetThanksReaction()); return; }
+        if (intent == L"tilt") { DispatchVoiceAdvice(HeroAdvisor::Instance().GetCheerUp()); return; }
+        if (intent == L"toxic_on") {
+            ConfigManager::Get().enableToxicMode = true;
+            ConfigManager::Save();
+            DispatchVoiceAdvice(L"Режим жесткой прожарки включен! Держись, за каждый косяк спрошу!");
+            return;
+        }
+        if (intent == L"toxic_off") {
+            ConfigManager::Get().enableToxicMode = false;
+            ConfigManager::Save();
+            DispatchVoiceAdvice(L"Базара нет, братан! Выключаю токсика, общаемся по-братски и на чилле.");
+            return;
+        }
+
+        // Trigger TikTok meme response
+        TriggerMeme(intent);
         return;
     }
-    if (text.find(L"по-братски") != std::wstring::npos ||
-        text.find(L"спокойн") != std::wstring::npos ||
-        text.find(L"хватит") != std::wstring::npos ||
-        text.find(L"добр") != std::wstring::npos) {
-        s_lastTriggerTick = nowTick;
-        ConfigManager::Get().enableToxicMode = false;
-        ConfigManager::Save();
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(L"Базара нет, братан! Выключаю токсика, общаемся по-братски и на чилле.");
-        return;
-    }
 
-    // Intent 2: Jokes & Humor ("пошути", "анекдот", "шутка", "рофл")
-    if (text.find(L"шутк") != std::wstring::npos ||
-        text.find(L"пошут") != std::wstring::npos ||
-        text.find(L"анекдот") != std::wstring::npos ||
-        text.find(L"рофл") != std::wstring::npos ||
-        text.find(L"прикол") != std::wstring::npos ||
-        text.find(L"рассмеши") != std::wstring::npos ||
-        text.find(L"joke") != std::wstring::npos ||
-        text.find(L"funny") != std::wstring::npos ||
-        text.find(L"shoot") != std::wstring::npos) {
-        s_lastTriggerTick = nowTick;
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetJoke());
-        return;
-    }
-
-    // Intent 3: How are you ("как дела", "как сам", "че как", "че делаешь")
-    if (text.find(L"как дела") != std::wstring::npos ||
-        text.find(L"как сам") != std::wstring::npos ||
-        text.find(L"че как") != std::wstring::npos ||
-        text.find(L"че делаешь") != std::wstring::npos ||
-        text.find(L"как настроение") != std::wstring::npos ||
-        text.find(L"how are you") != std::wstring::npos ||
-        text.find(L"whats up") != std::wstring::npos ||
-        text.find(L"kak dela") != std::wstring::npos ||
-        text.find(L"cock dela") != std::wstring::npos) {
-        s_lastTriggerTick = nowTick;
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetHowAreYou());
-        return;
-    }
-
-    // Intent 4: Greetings ("здарова", "привет", "салам", "газяву взял")
-    if (text.find(L"здаров") != std::wstring::npos ||
-        text.find(L"привет") != std::wstring::npos ||
-        text.find(L"салам") != std::wstring::npos ||
-        text.find(L"ку") != std::wstring::npos ||
-        text.find(L"хай") != std::wstring::npos ||
-        text.find(L"газяв") != std::wstring::npos ||
-        text.find(L"добрый день") != std::wstring::npos ||
-        text.find(L"hello") != std::wstring::npos ||
-        text.find(L"hi") != std::wstring::npos ||
-        text.find(L"rover") != std::wstring::npos ||
-        text.find(L"starova") != std::wstring::npos) {
-        s_lastTriggerTick = nowTick;
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetFriendlyChat());
-        return;
-    }
-
-    // Intent 5: Thanks & praise ("красава", "спасибо", "от души", "хорош")
-    if (text.find(L"красав") != std::wstring::npos ||
-        text.find(L"спасиб") != std::wstring::npos ||
-        text.find(L"спс") != std::wstring::npos ||
-        text.find(L"от души") != std::wstring::npos ||
-        text.find(L"хорош") != std::wstring::npos ||
-        text.find(L"молодец") != std::wstring::npos ||
-        text.find(L"thanks") != std::wstring::npos ||
-        text.find(L"thank you") != std::wstring::npos ||
-        text.find(L"good job") != std::wstring::npos) {
-        s_lastTriggerTick = nowTick;
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetThanksReaction());
-        return;
-    }
-
-    // Intent 6: Anti-tilt / Motivation ("мы горим", "мы проиграем", "тильт", "что делать")
-    if (text.find(L"горим") != std::wstring::npos ||
-        text.find(L"проигра") != std::wstring::npos ||
-        text.find(L"слива") != std::wstring::npos ||
-        text.find(L"тильт") != std::wstring::npos ||
-        text.find(L"раки") != std::wstring::npos ||
-        text.find(L"нубы") != std::wstring::npos) {
-        s_lastTriggerTick = nowTick;
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetCheerUp());
-        return;
-    }
-
-    // Intent 7: Buy advice ("что купить", "закуп", "предмет", "шмот", "buy")
-    if (text.find(L"купить") != std::wstring::npos ||
-        text.find(L"закуп") != std::wstring::npos ||
-        text.find(L"предмет") != std::wstring::npos ||
-        text.find(L"шмот") != std::wstring::npos ||
-        text.find(L"айтем") != std::wstring::npos ||
-        text.find(L"buy") != std::wstring::npos) {
-        s_lastTriggerTick = nowTick;
-        AskAdvice(0); // Buy
-        return;
-    }
-
-    // Intent 8: Skill advice ("что качать", "скилл", "прокачка", "способност")
-    if (text.find(L"качать") != std::wstring::npos ||
-        text.find(L"вкачать") != std::wstring::npos ||
-        text.find(L"скилл") != std::wstring::npos ||
-        text.find(L"способност") != std::wstring::npos ||
-        text.find(L"прокачк") != std::wstring::npos ||
-        text.find(L"skill") != std::wstring::npos) {
-        s_lastTriggerTick = nowTick;
-        AskAdvice(1); // Skill
-        return;
-    }
-
-    // Intent 9: Wake word alone ("Свин!" / "Пиг!")
+    // 3. Wake word alone (e.g. "Свин!", "Пиг!", "Брат!"):
     if (hasWakeWord) {
         s_lastTriggerTick = nowTick;
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetWakePrompt());
+        awakeUntil_ = now + std::chrono::seconds(14);
+        VoskEngine::Instance().ResetRecognizer();
+        DispatchVoiceAdvice(HeroAdvisor::Instance().GetWakePrompt());
         return;
     }
+
+    // 4. Conversational follow-up: within awake window, reply to user naturally
+    if (isAwakeWindow && text.length() > 2) {
+        s_lastTriggerTick = nowTick;
+        awakeUntil_ = now + std::chrono::seconds(14);
+        VoskEngine::Instance().ResetRecognizer();
+        std::wstring aiReply;
+        if (AiBrain::Instance().ProcessSpeech(text, aiReply)) {
+            DispatchVoiceAdvice(aiReply);
+        } else {
+            DispatchVoiceAdvice(HeroAdvisor::Instance().GetFriendlyChat());
+        }
+        return;
+    }
+}
+
+void VoiceAssistant::TriggerMeme(const std::wstring& memeType) {
+    std::wstring response;
+    if (memeType.empty()) {
+        response = HeroAdvisor::Instance().GetRandomTikTokMeme();
+    } else {
+        response = HeroAdvisor::Instance().GetMemeResponse(memeType);
+    }
+    DispatchVoiceAdvice(response);
 }
 
 void VoiceAssistant::AskAdvice(int queryType) {
@@ -530,11 +557,11 @@ void VoiceAssistant::AskAdvice(int queryType) {
         advice = HeroAdvisor::Instance().GetBuyAdvice();
     } else if (queryType == 1) {
         advice = HeroAdvisor::Instance().GetSkillAdvice();
+    } else if (queryType == 3) {
+        advice = HeroAdvisor::Instance().GetRandomTikTokMeme();
     } else {
         advice = HeroAdvisor::Instance().GetGeneralAdvice();
     }
 
-    // Show pig speech bubble & voice TTS
-    OverlayWindow::Instance().Show(true);
-    OverlayWindow::Instance().TriggerAdvice(advice);
+    DispatchVoiceAdvice(advice);
 }

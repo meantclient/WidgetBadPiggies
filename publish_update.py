@@ -45,7 +45,7 @@ def update_files_version(new_ver, changelog):
     # 3. Update version.json
     v_data = {
         "version": new_ver,
-        "download_url": "https://raw.githubusercontent.com/meantclient/WidgetBadPiggies/main/BadPiggiesSetup.exe",
+        "download_url": f"https://github.com/meantclient/WidgetBadPiggies/releases/download/v{new_ver}/BadPiggiesSetup.exe",
         "changelog": changelog
     }
     with open(VERSION_JSON, "w", encoding="utf-8") as f:

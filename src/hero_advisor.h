@@ -47,6 +47,8 @@ public:
     std::wstring GetThanksReaction();
     std::wstring GetCheerUp();
     std::wstring GetWakePrompt();
+    std::wstring GetMemeResponse(const std::wstring& trigger);
+    std::wstring GetRandomTikTokMeme();
 
     // 10,000+ Non-repeating Joke Engine
     std::wstring GenerateJokeById(int id);

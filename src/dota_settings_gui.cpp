@@ -341,10 +341,9 @@ void DotaSettingsOverlay::HandleClick(int x, int y) {
         VoiceAssistant::Instance().AskAdvice(1);
         return;
     }
-    // Bro Chat (F5): (435, 610, 220, 28)
+    // Bro Chat / TikTok Meme (F5): (435, 610, 220, 28)
     if (PtInButton(x, y, 435, 610, 220, 28)) {
-        OverlayWindow::Instance().Show(true);
-        OverlayWindow::Instance().TriggerAdvice(HeroAdvisor::Instance().GetFriendlyChat());
+        VoiceAssistant::Instance().TriggerMeme();
         return;
     }
 
@@ -378,14 +377,14 @@ void DotaSettingsOverlay::Render(HDC hdc) {
     SolidBrush headerBg(Color(255, 28, 33, 40));
     g.FillRectangle(&headerBg, 2, 2, w - 4, 42);
 
-    // Red Dota accent stripe
-    SolidBrush redStripe(Color(255, 194, 60, 42));
-    g.FillRectangle(&redStripe, 2, 43, w - 4, 3);
+    // Emerald / Gold Dota accent stripe
+    SolidBrush emeraldStripe(Color(255, 16, 185, 129));
+    g.FillRectangle(&emeraldStripe, 2, 43, w - 4, 3);
 
     // Header title
     Gdiplus::Font headerFont(L"Segoe UI", 12.0f, FontStyleBold, UnitPoint);
     SolidBrush goldBrush(Color(255, 231, 210, 145));
-    g.DrawString(L"DOTA 2 COMPANION — НАСТРОЙКИ WIDGET BAD PIGGIES", -1, &headerFont, PointF(20.0f, 12.0f), &goldBrush);
+    g.DrawString(L"DOTA 2 COMPANION — BAD PIGGIES AI 2026 (VOSK & TIKTOK)", -1, &headerFont, PointF(20.0f, 12.0f), &goldBrush);
 
     // Close button [✕]
     SolidBrush closeBg(Color(255, 45, 52, 62));
@@ -504,10 +503,10 @@ void DotaSettingsOverlay::Render(HDC hdc) {
     }
 
     // Voice assistant & wake word
-    drawCheckbox(25, 436, cfgCopy_.enableVoiceAssistant, L"Голосовой помощник (микрофон: «Свин, что купить?» / «Пиг»):");
+    drawCheckbox(25, 436, cfgCopy_.enableVoiceAssistant, L"Голосовой помощник (Vosk Офлайн AI: «Свин, что купить?», чилл гай, дубайский шоколад):");
     g.DrawString(L"(или Пиг)", -1, &normalFont, PointF(558.0f, 438.0f), &goldBrush);
 
-    drawCheckbox(25, 464, cfgCopy_.enableToxicMode, L"🔥 Говорить наравне с человеком (мощная прожарка / токсик)");
+    drawCheckbox(25, 464, cfgCopy_.enableToxicMode, L"🔥 Режим прожарки и мемов (токсик, скибиди, сигма, хомяк, альтушка)");
     drawCheckbox(25, 492, cfgCopy_.enableProactiveAdvisor, L"Умный мета-советник Dota2ProTracker (тайминги, инвентарь, скиллы)");
     drawCheckbox(25, 520, cfgCopy_.hideWhenNoDota, L"Автоматически скрывать свина, когда игра Dota 2 не запущена");
 
@@ -530,7 +529,7 @@ void DotaSettingsOverlay::Render(HDC hdc) {
 
     drawTestBtn(25, 610, 195, 28, L"🧠 F6: Что купить?");
     drawTestBtn(230, 610, 195, 28, L"⚡ F7: Что качать?");
-    drawTestBtn(435, 610, 220, 28, L"💬 F5: Поболтать!");
+    drawTestBtn(435, 610, 220, 28, L"🔥 F5: TikTok Мемы!");
 
     // --- Footer ---
     g.DrawString(L"Подсказка: зажмите Left Ctrl и перетаскивайте свина левой кнопкой мыши в любое место!", -1, &normalFont, PointF(35.0f, 650.0f), &goldBrush);

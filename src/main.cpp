@@ -9,15 +9,30 @@
 #include "tray.h"
 #include "dota_gsi.h"
 #include "updater.h"
+#include "ai_brain.h"
 
 #define WM_TRAYICON (WM_USER + 100)
+#define WM_VOICE_TRIGGER (WM_USER + 201)
 
 static const wchar_t* MAIN_MSG_CLASS = L"BadPiggiesMainMsgClass";
-static HWND g_hMsgWnd = NULL;
+HWND g_hMsgWnd = NULL;
 
 LRESULT CALLBACK MainMsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_TRAYICON) {
         TrayManager::Instance().HandleTrayMessage(lParam);
+        return 0;
+    }
+    else if (msg == WM_VOICE_TRIGGER) {
+        std::wstring* pText = (std::wstring*)lParam;
+        if (pText) {
+            FILE* fLog = _wfopen(L"voice_debug.log", L"a, ccs=UTF-8");
+            if (fLog) {
+                fwprintf(fLog, L"[MAIN THREAD TRIGGER] '%s'\n", pText->c_str());
+                fclose(fLog);
+            }
+            OverlayWindow::Instance().TriggerAdvice(*pText);
+            delete pText;
+        }
         return 0;
     }
     else if (msg == WM_DESTROY) {
@@ -28,14 +43,28 @@ LRESULT CALLBACK MainMsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    // Ensure thread runs on the user's interactive physical desktop ("Default")
+    HDESK hInteractiveDesk = OpenDesktopW(L"Default", 0, FALSE, GENERIC_ALL);
+    if (hInteractiveDesk) {
+        SetThreadDesktop(hInteractiveDesk);
+    }
+
     // Single instance mutex
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"BadPiggiesDotaWidgetMutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        // App is already running
-        HWND hExisting = FindWindowW(NULL, L"Bad Piggies Widget — Настройки");
+        // App is already running - bring Settings Window to front!
+        HWND hExisting = FindWindowW(L"BadPiggiesSettingsModernClass", NULL);
+        if (!hExisting) {
+            hExisting = FindWindowW(NULL, L"Bad Piggies Widget — Cyber Emerald & Vosk Edition (2026)");
+        }
+        if (!hExisting) {
+            hExisting = FindWindowW(NULL, L"Bad Piggies Widget — Настройки");
+        }
         if (hExisting) {
+            ShowWindow(hExisting, SW_RESTORE);
             ShowWindow(hExisting, SW_SHOW);
             SetForegroundWindow(hExisting);
+            BringWindowToTop(hExisting);
         }
         return 0;
     }
@@ -119,6 +148,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // Start GSI Server & Dota monitor
     gsi.Start(4000);
+
+    // Initialize AI Brain & Memory
+    AiBrain::Instance().Init();
 
     // Start Voice Assistant if enabled
     if (ConfigManager::Get().enableVoiceAssistant) {

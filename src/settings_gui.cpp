@@ -11,9 +11,11 @@
 #include "dota_gsi.h"
 #include "resource.h"
 #include "updater.h"
+#include "vosk_engine.h"
 #include "voice_assistant.h"
 #include "voice.h"
 #include "hero_advisor.h"
+#include "ai_brain.h"
 #include <algorithm>
 #include <commctrl.h>
 #include <uxtheme.h>
@@ -23,7 +25,7 @@
 
 using namespace Gdiplus;
 
-static const wchar_t* SETTINGS_CLASS = L"BadPiggiesSettingsClass";
+static const wchar_t* SETTINGS_CLASS = L"BadPiggiesSettingsModernClass";
 
 enum ControlIDs {
     IDC_COMBO_PIGS = 1001,
@@ -45,7 +47,9 @@ enum ControlIDs {
     IDC_CHK_VOICE_ASSISTANT = 1017,
     IDC_TXT_WAKE_WORD = 1018,
     IDC_CHK_PROACTIVE_ADVISOR = 1019,
-    IDC_BTN_TEST_ADVISOR = 1020
+    IDC_BTN_TEST_ADVISOR = 1020,
+    IDC_BTN_TEST_MEME = 1021,
+    IDC_BTN_TEST_PLAYLIST = 1022
 };
 
 SettingsWindow& SettingsWindow::Instance() {
@@ -56,8 +60,15 @@ SettingsWindow& SettingsWindow::Instance() {
 SettingsWindow::SettingsWindow() {}
 
 SettingsWindow::~SettingsWindow() {
+    if (hFontTitle_) DeleteObject(hFontTitle_);
     if (hFont_) DeleteObject(hFont_);
     if (hFontBold_) DeleteObject(hFontBold_);
+    if (hFontSmall_) DeleteObject(hFontSmall_);
+
+    if (hBrBkg_) DeleteObject(hBrBkg_);
+    if (hBrCard_) DeleteObject(hBrCard_);
+    if (hBrEdit_) DeleteObject(hBrEdit_);
+
     if (hwnd_) DestroyWindow(hwnd_);
 }
 
@@ -73,7 +84,12 @@ bool SettingsWindow::Create() {
     wc.hInstance = GetModuleHandle(NULL);
     wc.lpszClassName = SETTINGS_CLASS;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+
+    hBrBkg_ = CreateSolidBrush(RGB(14, 19, 26));
+    hBrCard_ = CreateSolidBrush(RGB(22, 29, 39));
+    hBrEdit_ = CreateSolidBrush(RGB(26, 35, 47));
+
+    wc.hbrBackground = hBrBkg_;
 
     HICON hAppIcon = LoadIconW(GetModuleHandle(NULL), MAKEINTRESOURCEW(IDI_APP_ICON));
     if (!hAppIcon) {
@@ -83,16 +99,24 @@ bool SettingsWindow::Create() {
     wc.hIcon = hAppIcon;
     RegisterClassExW(&wc);
 
-    hFont_ = CreateFontW(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    hFontTitle_ = CreateFontW(19, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
 
-    hFontBold_ = CreateFontW(16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+    hFontBold_ = CreateFontW(15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
 
-    int winW = 600;
-    int winH = 760;
+    hFont_ = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+
+    hFontSmall_ = CreateFontW(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+
+    int winW = 630;
+    int winH = 780;
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
     int x = (screenW - winW) / 2;
@@ -101,7 +125,7 @@ bool SettingsWindow::Create() {
     hwnd_ = CreateWindowExW(
         WS_EX_DLGMODALFRAME,
         SETTINGS_CLASS,
-        L"Bad Piggies Widget — Настройки",
+        L"Bad Piggies Widget — Cyber Emerald & Vosk Edition (2026)",
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         x, y, winW, winH,
         NULL, NULL, GetModuleHandle(NULL), this
@@ -120,20 +144,17 @@ bool SettingsWindow::Create() {
 void SettingsWindow::CreateControls() {
     HINSTANCE hInst = GetModuleHandle(NULL);
 
-    // Group 1: Choose Pig
-    HWND grpPig = CreateWindowW(L"BUTTON", L" Выбор свинки ",
-        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        20, 15, 310, 195, hwnd_, NULL, hInst, NULL);
-    SendMessageW(grpPig, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
-
+    // =========================================================================
+    // CARD 1: PIG SELECTION & LIVE PREVIEW (Y = 80 to 260)
+    // =========================================================================
     HWND lblPig = CreateWindowW(L"STATIC", L"Внешний вид свинки:",
         WS_CHILD | WS_VISIBLE,
-        35, 45, 275, 20, hwnd_, NULL, hInst, NULL);
-    SendMessageW(lblPig, WM_SETFONT, (WPARAM)hFont_, TRUE);
+        35, 108, 280, 18, hwnd_, NULL, hInst, NULL);
+    SendMessageW(lblPig, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
     comboPigs_ = CreateWindowW(L"COMBOBOX", NULL,
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
-        35, 70, 275, 260, hwnd_, (HMENU)IDC_COMBO_PIGS, hInst, NULL);
+        35, 130, 290, 260, hwnd_, (HMENU)IDC_COMBO_PIGS, hInst, NULL);
     SendMessageW(comboPigs_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     const wchar_t* pigNames[] = {
@@ -145,183 +166,164 @@ void SettingsWindow::CreateControls() {
         L"Вид 6 (Свинка с веснушками)",
         L"Вид 7 (Улыбающаяся свинка)"
     };
-
     for (int i = 0; i < 7; ++i) {
         SendMessageW(comboPigs_, CB_ADDSTRING, 0, (LPARAM)pigNames[i]);
     }
 
     HWND lblSize = CreateWindowW(L"STATIC", L"Размер виджета на экране:",
         WS_CHILD | WS_VISIBLE,
-        35, 120, 275, 20, hwnd_, NULL, hInst, NULL);
-    SendMessageW(lblSize, WM_SETFONT, (WPARAM)hFont_, TRUE);
+        35, 172, 280, 18, hwnd_, NULL, hInst, NULL);
+    SendMessageW(lblSize, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
     comboSize_ = CreateWindowW(L"COMBOBOX", NULL,
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
-        35, 145, 275, 150, hwnd_, (HMENU)IDC_COMBO_SIZE, hInst, NULL);
+        35, 194, 290, 150, hwnd_, (HMENU)IDC_COMBO_SIZE, hInst, NULL);
     SendMessageW(comboSize_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
     SendMessageW(comboSize_, CB_ADDSTRING, 0, (LPARAM)L"Маленький (130 px)");
     SendMessageW(comboSize_, CB_ADDSTRING, 0, (LPARAM)L"Средний (180 px - Рекомендуется)");
     SendMessageW(comboSize_, CB_ADDSTRING, 0, (LPARAM)L"Большой (240 px)");
 
-    // Group 2: Preview
-    HWND grpPreview = CreateWindowW(L"BUTTON", L" Превью ",
-        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        345, 15, 225, 195, hwnd_, NULL, hInst, NULL);
-    SendMessageW(grpPreview, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
-
     previewBox_ = CreateWindowW(L"STATIC", NULL,
         WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
-        360, 42, 195, 155, hwnd_, (HMENU)IDC_PREVIEW, hInst, NULL);
+        365, 96, 230, 150, hwnd_, (HMENU)IDC_PREVIEW, hInst, NULL);
 
-    // Group 3: Options & Assistant
-    HWND grpOptions = CreateWindowW(L"BUTTON", L" Параметры и Помощник ",
-        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        20, 215, 310, 420, hwnd_, NULL, hInst, NULL);
-    SendMessageW(grpOptions, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
-
-    chkSound_ = CreateWindowW(L"BUTTON", L"Звуковые эффекты (WAV)",
+    // =========================================================================
+    // CARD 2: VOSK VOICE ASSISTANT & TIKTOK MEMES (Y = 270 to 625, Left Column)
+    // =========================================================================
+    chkVoiceAssistant_ = CreateWindowW(L"BUTTON", L"Голосовой помощник (Vosk Офлайн AI)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 238, 280, 20, hwnd_, (HMENU)IDC_CHK_SOUND, hInst, NULL);
-    SendMessageW(chkSound_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    chkVoiceTTS_ = CreateWindowW(L"BUTTON", L"Озвучка фраз:",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 260, 115, 20, hwnd_, (HMENU)IDC_CHK_VOICE_TTS, hInst, NULL);
-    SendMessageW(chkVoiceTTS_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    comboVoiceGender_ = CreateWindowW(L"COMBOBOX", NULL,
-        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
-        155, 258, 160, 120, hwnd_, NULL, hInst, NULL);
-    SendMessageW(comboVoiceGender_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-    SendMessageW(comboVoiceGender_, CB_ADDSTRING, 0, (LPARAM)L"Женский (Ирина)");
-    SendMessageW(comboVoiceGender_, CB_ADDSTRING, 0, (LPARAM)L"Мужской (Павел)");
-
-    chkPigShadow_ = CreateWindowW(L"BUTTON", L"Объёмная 3D-тень свина",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 283, 280, 20, hwnd_, NULL, hInst, NULL);
-    SendMessageW(chkPigShadow_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    chkDynamicIsland_ = CreateWindowW(L"BUTTON", L"Режим Dynamic Island (вверху)",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 305, 280, 20, hwnd_, NULL, hInst, NULL);
-    SendMessageW(chkDynamicIsland_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
-
-    chkHide_ = CreateWindowW(L"BUTTON", L"Скрывать с экрана, если Дота закрыта",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 328, 280, 20, hwnd_, (HMENU)IDC_CHK_HIDE, hInst, NULL);
-    SendMessageW(chkHide_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    chkAutostart_ = CreateWindowW(L"BUTTON", L"Запускать вместе с Windows",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 350, 280, 20, hwnd_, (HMENU)IDC_CHK_AUTOSTART, hInst, NULL);
-    SendMessageW(chkAutostart_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    chkUseName_ = CreateWindowW(L"BUTTON", L"Обращаться к вам:",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 375, 155, 20, hwnd_, (HMENU)IDC_CHK_USE_NAME, hInst, NULL);
-    SendMessageW(chkUseName_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
-
-    txtPlayerName_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"Марат",
-        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        195, 374, 120, 22, hwnd_, (HMENU)IDC_TXT_PLAYER_NAME, hInst, NULL);
-    SendMessageW(txtPlayerName_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    // Voice Assistant Controls
-    chkVoiceAssistant_ = CreateWindowW(L"BUTTON", L"Голосовой помощник (микрофон)",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 404, 280, 22, hwnd_, (HMENU)IDC_CHK_VOICE_ASSISTANT, hInst, NULL);
+        35, 295, 290, 22, hwnd_, (HMENU)IDC_CHK_VOICE_ASSISTANT, hInst, NULL);
     SendMessageW(chkVoiceAssistant_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
     HWND lblMic = CreateWindowW(L"STATIC", L"Микрофон:",
         WS_CHILD | WS_VISIBLE,
-        35, 432, 80, 20, hwnd_, NULL, hInst, NULL);
+        35, 324, 75, 18, hwnd_, NULL, hInst, NULL);
     SendMessageW(lblMic, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     comboMicrophone_ = CreateWindowW(L"COMBOBOX", NULL,
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
-        120, 430, 195, 160, hwnd_, NULL, hInst, NULL);
+        115, 322, 210, 160, hwnd_, NULL, hInst, NULL);
     SendMessageW(comboMicrophone_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
-    HWND lblWake = CreateWindowW(L"STATIC", L"Имя помощника:",
+    HWND lblWake = CreateWindowW(L"STATIC", L"Имя (wake word):",
         WS_CHILD | WS_VISIBLE,
-        35, 460, 150, 20, hwnd_, NULL, hInst, NULL);
+        35, 355, 120, 18, hwnd_, NULL, hInst, NULL);
     SendMessageW(lblWake, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
     txtWakeWord_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"Свин",
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        195, 458, 120, 22, hwnd_, (HMENU)IDC_TXT_WAKE_WORD, hInst, NULL);
+        160, 352, 165, 22, hwnd_, (HMENU)IDC_TXT_WAKE_WORD, hInst, NULL);
     SendMessageW(txtWakeWord_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
-    chkToxicMode_ = CreateWindowW(L"BUTTON", L"Говорить наравне (токсик / прожарка)",
+    chkToxicMode_ = CreateWindowW(L"BUTTON", L"Режим жесткой прожарки (Токсик / Рофлы)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 488, 280, 22, hwnd_, NULL, hInst, NULL);
+        35, 384, 290, 20, hwnd_, NULL, hInst, NULL);
     SendMessageW(chkToxicMode_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
-    chkProactiveAdvisor_ = CreateWindowW(L"BUTTON", L"Советы по игре (закуп и скиллы)",
+    chkProactiveAdvisor_ = CreateWindowW(L"BUTTON", L"Советы по игре (закуп, скиллы, тайминги)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        35, 514, 280, 22, hwnd_, (HMENU)IDC_CHK_PROACTIVE_ADVISOR, hInst, NULL);
+        35, 410, 290, 20, hwnd_, (HMENU)IDC_CHK_PROACTIVE_ADVISOR, hInst, NULL);
     SendMessageW(chkProactiveAdvisor_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
 
-    HWND lblAdvNote = CreateWindowW(L"STATIC", L"(Анализ героя, тайминги, инвентарь)",
-        WS_CHILD | WS_VISIBLE,
-        35, 538, 280, 16, hwnd_, NULL, hInst, NULL);
-    SendMessageW(lblAdvNote, WM_SETFONT, (WPARAM)hFont_, TRUE);
+    chkUseName_ = CreateWindowW(L"BUTTON", L"Обращаться к вам по имени:",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 438, 175, 20, hwnd_, (HMENU)IDC_CHK_USE_NAME, hInst, NULL);
+    SendMessageW(chkUseName_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
-    // Group 4: Testing & Updates
-    HWND grpTest = CreateWindowW(L"BUTTON", L" Тестирование и Обновление ",
-        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        345, 215, 225, 420, hwnd_, NULL, hInst, NULL);
-    SendMessageW(grpTest, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+    txtPlayerName_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"Марат",
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        215, 436, 110, 22, hwnd_, (HMENU)IDC_TXT_PLAYER_NAME, hInst, NULL);
+    SendMessageW(txtPlayerName_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
-    btnTestKill_ = CreateWindowW(L"BUTTON", L"Тест: Килл! (Прыжок)",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        360, 245, 195, 28, hwnd_, (HMENU)IDC_BTN_TEST_KILL, hInst, NULL);
-    SendMessageW(btnTestKill_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+    chkSound_ = CreateWindowW(L"BUTTON", L"Звуковые эффекты (WAV киллы, лотусы)",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 468, 290, 20, hwnd_, (HMENU)IDC_CHK_SOUND, hInst, NULL);
+    SendMessageW(chkSound_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
-    btnTestDeath_ = CreateWindowW(L"BUTTON", L"Тест: Смерть",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        360, 278, 195, 28, hwnd_, (HMENU)IDC_BTN_TEST_DEATH, hInst, NULL);
-    SendMessageW(btnTestDeath_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+    chkVoiceTTS_ = CreateWindowW(L"BUTTON", L"Голосовая озвучка (TTS):",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 494, 160, 20, hwnd_, (HMENU)IDC_CHK_VOICE_TTS, hInst, NULL);
+    SendMessageW(chkVoiceTTS_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
-    btnTestLowHp_ = CreateWindowW(L"BUTTON", L"Тест: Low HP (Виньетка)",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        360, 311, 195, 28, hwnd_, (HMENU)IDC_BTN_TEST_LOW_HP, hInst, NULL);
-    SendMessageW(btnTestLowHp_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+    comboVoiceGender_ = CreateWindowW(L"COMBOBOX", NULL,
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+        200, 492, 125, 120, hwnd_, NULL, hInst, NULL);
+    SendMessageW(comboVoiceGender_, WM_SETFONT, (WPARAM)hFont_, TRUE);
+    SendMessageW(comboVoiceGender_, CB_ADDSTRING, 0, (LPARAM)L"Ирина (Ж)");
+    SendMessageW(comboVoiceGender_, CB_ADDSTRING, 0, (LPARAM)L"Павел (М)");
+
+    chkPigShadow_ = CreateWindowW(L"BUTTON", L"Объёмная 3D-тень свина",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 524, 290, 20, hwnd_, NULL, hInst, NULL);
+    SendMessageW(chkPigShadow_, WM_SETFONT, (WPARAM)hFont_, TRUE);
+
+    chkDynamicIsland_ = CreateWindowW(L"BUTTON", L"Режим Dynamic Island (вверху экрана)",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 550, 290, 20, hwnd_, NULL, hInst, NULL);
+    SendMessageW(chkDynamicIsland_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+
+    chkHide_ = CreateWindowW(L"BUTTON", L"Скрывать виджет, если Дота закрыта",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 576, 290, 20, hwnd_, (HMENU)IDC_CHK_HIDE, hInst, NULL);
+    SendMessageW(chkHide_, WM_SETFONT, (WPARAM)hFont_, TRUE);
+
+    chkAutostart_ = CreateWindowW(L"BUTTON", L"Автозапуск вместе с Windows",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        35, 602, 290, 20, hwnd_, (HMENU)IDC_CHK_AUTOSTART, hInst, NULL);
+    SendMessageW(chkAutostart_, WM_SETFONT, (WPARAM)hFont_, TRUE);
+
+    // =========================================================================
+    // CARD 3: INTERACTIVE TESTING & TIKTOK MEMES (Y = 270 to 625, Right Column)
+    // =========================================================================
+    btnTestKill_ = CreateWindowW(L"BUTTON", L"🎯 Тест: Килл! (Прыжок)",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        365, 292, 230, 28, hwnd_, (HMENU)IDC_BTN_TEST_KILL, hInst, NULL);
+
+    btnTestDeath_ = CreateWindowW(L"BUTTON", L"💀 Тест: Смерть (Роаст)",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        365, 324, 230, 28, hwnd_, (HMENU)IDC_BTN_TEST_DEATH, hInst, NULL);
+
+    btnTestLowHp_ = CreateWindowW(L"BUTTON", L"🩸 Тест: Low HP (Виньетка)",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        365, 356, 230, 28, hwnd_, (HMENU)IDC_BTN_TEST_LOW_HP, hInst, NULL);
 
     btnTestAdvisor_ = CreateWindowW(L"BUTTON", L"🧠 Тест: Свин, что купить?",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        360, 345, 195, 34, hwnd_, (HMENU)IDC_BTN_TEST_ADVISOR, hInst, NULL);
-    SendMessageW(btnTestAdvisor_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        365, 388, 230, 28, hwnd_, (HMENU)IDC_BTN_TEST_ADVISOR, hInst, NULL);
 
-    btnCheckUpdate_ = CreateWindowW(L"BUTTON", L"Проверить обновления",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        360, 386, 195, 28, hwnd_, (HMENU)IDC_BTN_CHECK_UPDATE, hInst, NULL);
-    SendMessageW(btnCheckUpdate_, WM_SETFONT, (WPARAM)hFont_, TRUE);
+    btnTestMeme_ = CreateWindowW(L"BUTTON", L"🔥 Тест: Мем из Тиктока!",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        365, 420, 230, 28, hwnd_, (HMENU)IDC_BTN_TEST_MEME, hInst, NULL);
+
+    btnTestPlaylist_ = CreateWindowW(L"BUTTON", L"🎵 Тест: Включи мой плейлист",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        365, 452, 230, 30, hwnd_, (HMENU)IDC_BTN_TEST_PLAYLIST, hInst, NULL);
+
+    btnSetupDota_ = CreateWindowW(L"BUTTON", L"🎮 Настроить CFG Dota 2 GSI",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        365, 486, 230, 28, hwnd_, (HMENU)IDC_BTN_SETUP_DOTA, hInst, NULL);
+
+    btnCheckUpdate_ = CreateWindowW(L"BUTTON", L"🔄 Проверить обновления",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        365, 518, 230, 26, hwnd_, (HMENU)IDC_BTN_CHECK_UPDATE, hInst, NULL);
 
     std::string vStr = ConfigManager::Get().appVersion;
-    std::wstring verStr = L"Версия: v" + std::wstring(vStr.begin(), vStr.end()) + L" (Dynamic Island & AI)";
+    std::wstring verStr = L"Версия: v" + std::wstring(vStr.begin(), vStr.end()) + L" • Vosk AI Edition 2026";
     HWND lblVer = CreateWindowW(L"STATIC", verStr.c_str(),
         WS_CHILD | WS_VISIBLE | SS_CENTER,
-        350, 420, 215, 18, hwnd_, NULL, hInst, NULL);
-    SendMessageW(lblVer, WM_SETFONT, (WPARAM)hFont_, TRUE);
+        365, 580, 230, 16, hwnd_, NULL, hInst, NULL);
+    SendMessageW(lblVer, WM_SETFONT, (WPARAM)hFontSmall_, TRUE);
 
-    btnSetupDota_ = CreateWindowW(L"BUTTON", L"Обновить CFG Доты",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        360, 444, 195, 30, hwnd_, (HMENU)IDC_BTN_SETUP_DOTA, hInst, NULL);
-    SendMessageW(btnSetupDota_, WM_SETFONT, (WPARAM)hFont_, TRUE);
-
-    // Status Label
-    lblStatus_ = CreateWindowW(L"STATIC", L"Статус: поиск Dota 2...",
+    // Bottom Status Bar
+    lblStatus_ = CreateWindowW(L"STATIC", L"Статус: Поиск Dota 2...",
         WS_CHILD | WS_VISIBLE,
-        25, 645, 545, 22, hwnd_, (HMENU)IDC_LBL_STATUS, hInst, NULL);
+        25, 646, 580, 20, hwnd_, (HMENU)IDC_LBL_STATUS, hInst, NULL);
     SendMessageW(lblStatus_, WM_SETFONT, (WPARAM)hFont_, TRUE);
 
-    // Save button
-    btnSave_ = CreateWindowW(L"BUTTON", L"Сохранить и применить",
-        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-        175, 672, 250, 44, hwnd_, (HMENU)IDC_BTN_SAVE, hInst, NULL);
-    SendMessageW(btnSave_, WM_SETFONT, (WPARAM)hFontBold_, TRUE);
+    // Save Button
+    btnSave_ = CreateWindowW(L"BUTTON", L"💾 СОХРАНИТЬ И ПРИМЕНИТЬ",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        175, 678, 280, 48, hwnd_, (HMENU)IDC_BTN_SAVE, hInst, NULL);
 }
 
 void SettingsWindow::LoadCurrentSettingsToUI() {
@@ -345,13 +347,12 @@ void SettingsWindow::LoadCurrentSettingsToUI() {
 
     // Microphones list
     SendMessageW(comboMicrophone_, CB_RESETCONTENT, 0, 0);
-    SendMessageW(comboMicrophone_, CB_ADDSTRING, 0, (LPARAM)L"По умолчанию (Системный)");
     auto mics = VoiceAssistant::GetAvailableMicrophones();
     int selMicIdx = 0;
     for (size_t i = 0; i < mics.size(); ++i) {
         SendMessageW(comboMicrophone_, CB_ADDSTRING, 0, (LPARAM)mics[i].first.c_str());
         if (!cfg.microphoneDevice.empty() && (cfg.microphoneDevice == mics[i].first || cfg.microphoneDevice == mics[i].second)) {
-            selMicIdx = (int)i + 1;
+            selMicIdx = (int)i;
         }
     }
     SendMessageW(comboMicrophone_, CB_SETCURSEL, selMicIdx, 0);
@@ -414,8 +415,8 @@ void SettingsWindow::ApplySettings() {
     std::wstring oldMic = cfg.microphoneDevice;
     if (mSel <= 0) {
         cfg.microphoneDevice = L"";
-    } else if (mSel - 1 < (int)mics.size()) {
-        cfg.microphoneDevice = mics[mSel - 1].first;
+    } else if (mSel < (int)mics.size()) {
+        cfg.microphoneDevice = mics[mSel].first;
     }
 
     bool oldVoice = cfg.enableVoiceAssistant;
@@ -443,7 +444,6 @@ void SettingsWindow::ApplySettings() {
     ConfigManager::Save();
     OverlayWindow::Instance().ReloadSkinAndSize();
 
-    // Check visibility based on Dota state
     if (cfg.hideWhenNoDota && !DotaGsiService::Instance().IsDotaActive()) {
         OverlayWindow::Instance().Show(false);
     } else {
@@ -453,11 +453,33 @@ void SettingsWindow::ApplySettings() {
 
 void SettingsWindow::UpdateDotaStatus(bool isRunning) {
     if (!lblStatus_) return;
+    std::wstring voskStatus = VoskEngine::Instance().IsModelLoaded() ? L" • 🟢 Vosk Офлайн AI" : L" • ⚪ SAPI";
     if (isRunning) {
-        SetWindowTextW(lblStatus_, L"Статус: Dota 2 запущена!");
+        SetWindowTextW(lblStatus_, (L"Статус: Dota 2 запущена!" + voskStatus).c_str());
     } else {
-        SetWindowTextW(lblStatus_, L"Статус: Dota 2 ожидает запуска...");
+        SetWindowTextW(lblStatus_, (L"Статус: Dota 2 ожидает запуска..." + voskStatus).c_str());
     }
+}
+
+void SettingsWindow::SetLastRecognizedText(const std::wstring& text) {
+    if (!lblStatus_) return;
+    std::wstring display = L"🎤 Услышал: \"" + text + L"\"";
+    SetWindowTextW(lblStatus_, display.c_str());
+}
+
+void SettingsWindow::SetLastAnswerText(const std::wstring& answer) {
+    if (!lblStatus_) return;
+    std::wstring display = L"💬 Свин ответил: \"" + answer + L"\"";
+    SetWindowTextW(lblStatus_, display.c_str());
+}
+
+static void AddRoundedRect(GraphicsPath& path, RectF rect, float radius) {
+    float diameter = radius * 2.0f;
+    path.AddArc(rect.X, rect.Y, diameter, diameter, 180.0f, 90.0f);
+    path.AddArc(rect.X + rect.Width - diameter, rect.Y, diameter, diameter, 270.0f, 90.0f);
+    path.AddArc(rect.X + rect.Width - diameter, rect.Y + rect.Height - diameter, diameter, diameter, 0.0f, 90.0f);
+    path.AddArc(rect.X, rect.Y + rect.Height - diameter, diameter, diameter, 90.0f, 90.0f);
+    path.CloseFigure();
 }
 
 void SettingsWindow::DrawPreview(HDC hdc, RECT rc) {
@@ -465,28 +487,115 @@ void SettingsWindow::DrawPreview(HDC hdc, RECT rc) {
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
 
-    // Subtle background
-    SolidBrush bg(Color(245, 247, 250));
-    g.FillRectangle(&bg, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+    float w = (float)(rc.right - rc.left);
+    float h = (float)(rc.bottom - rc.top);
 
-    Pen border(Color(210, 215, 220), 1.0f);
-    g.DrawRectangle(&border, rc.left, rc.top, rc.right - rc.left - 1, rc.bottom - rc.top - 1);
+    // Modern dark pedestal background
+    GraphicsPath cardPath;
+    AddRoundedRect(cardPath, RectF(0, 0, w, h), 12.0f);
+    SolidBrush bg(Color(255, 18, 24, 33));
+    g.FillPath(&bg, &cardPath);
+
+    // Glowing emerald pedestal ring
+    Pen ringPen(Color(120, 16, 185, 129), 1.5f);
+    g.DrawEllipse(&ringPen, w * 0.15f, h * 0.72f, w * 0.70f, h * 0.22f);
+
+    // Border
+    Pen border(Color(180, 38, 51, 68), 1.2f);
+    g.DrawPath(&border, &cardPath);
 
     if (previewImage_ && previewImage_->GetLastStatus() == Ok) {
-        int w = previewImage_->GetWidth();
-        int h = previewImage_->GetHeight();
+        int imgW = previewImage_->GetWidth();
+        int imgH = previewImage_->GetHeight();
 
-        float targetW = (float)(rc.right - rc.left - 20);
-        float targetH = (float)(rc.bottom - rc.top - 20);
+        float targetW = w - 30.0f;
+        float targetH = h - 30.0f;
 
-        float scale = (std::min)(targetW / w, targetH / h);
-        float drawW = w * scale;
-        float drawH = h * scale;
-        float x = rc.left + (targetW + 20 - drawW) / 2.0f;
-        float y = rc.top + (targetH + 20 - drawH) / 2.0f;
+        float scale = (std::min)(targetW / imgW, targetH / imgH);
+        float drawW = imgW * scale;
+        float drawH = imgH * scale;
+        float x = (w - drawW) / 2.0f;
+        float y = (h - drawH) / 2.0f - 4.0f;
 
         g.DrawImage(previewImage_.get(), RectF(x, y, drawW, drawH));
     }
+}
+
+void SettingsWindow::DrawOwnerButton(DRAWITEMSTRUCT* dis) {
+    Graphics g(dis->hDC);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+
+    RECT r = dis->rcItem;
+    float w = (float)(r.right - r.left);
+    float h = (float)(r.bottom - r.top);
+    bool pressed = (dis->itemState & ODS_SELECTED);
+
+    GraphicsPath btnPath;
+    AddRoundedRect(btnPath, RectF(0, 0, w, h), 7.0f);
+
+    Color topColor, botColor, borderColor, textColor;
+    int ctlId = dis->CtlID;
+
+    if (ctlId == IDC_BTN_SAVE) {
+        // Emerald Gradient Action Button
+        topColor = pressed ? Color(255, 12, 140, 95) : Color(255, 16, 185, 129);
+        botColor = pressed ? Color(255, 8, 110, 75)  : Color(255, 5, 150, 105);
+        borderColor = Color(255, 52, 211, 153);
+        textColor = Color(255, 255, 255, 255);
+    } else if (ctlId == IDC_BTN_TEST_KILL) {
+        topColor = pressed ? Color(255, 20, 35, 30) : Color(255, 26, 46, 38);
+        botColor = pressed ? Color(255, 14, 25, 20) : Color(255, 18, 33, 26);
+        borderColor = Color(255, 16, 185, 129);
+        textColor = Color(255, 52, 211, 153);
+    } else if (ctlId == IDC_BTN_TEST_DEATH) {
+        topColor = pressed ? Color(255, 45, 20, 25) : Color(255, 55, 25, 30);
+        botColor = pressed ? Color(255, 30, 12, 16) : Color(255, 36, 16, 20);
+        borderColor = Color(255, 239, 68, 68);
+        textColor = Color(255, 252, 165, 165);
+    } else if (ctlId == IDC_BTN_TEST_LOW_HP) {
+        topColor = pressed ? Color(255, 45, 18, 30) : Color(255, 56, 22, 36);
+        botColor = pressed ? Color(255, 30, 10, 20) : Color(255, 38, 14, 24);
+        borderColor = Color(255, 244, 63, 94);
+        textColor = Color(255, 253, 164, 175);
+    } else if (ctlId == IDC_BTN_TEST_MEME) {
+        // TikTok / Cyberpunk Neon Purple
+        topColor = pressed ? Color(255, 45, 20, 50) : Color(255, 58, 25, 65);
+        botColor = pressed ? Color(255, 30, 12, 35) : Color(255, 40, 15, 45);
+        borderColor = Color(255, 217, 70, 239);
+        textColor = Color(255, 245, 208, 254);
+    } else if (ctlId == IDC_BTN_TEST_ADVISOR) {
+        topColor = pressed ? Color(255, 18, 35, 48) : Color(255, 24, 46, 62);
+        botColor = pressed ? Color(255, 12, 24, 34) : Color(255, 16, 32, 44);
+        borderColor = Color(255, 6, 182, 212);
+        textColor = Color(255, 165, 243, 252);
+    } else if (ctlId == IDC_BTN_TEST_PLAYLIST) {
+        topColor = pressed ? Color(255, 45, 35, 15) : Color(255, 58, 44, 18);
+        botColor = pressed ? Color(255, 30, 22, 10) : Color(255, 40, 28, 12);
+        borderColor = Color(255, 245, 158, 11); // Amber / Gold neon
+        textColor = Color(255, 254, 243, 199);
+    } else {
+        topColor = pressed ? Color(255, 22, 30, 40) : Color(255, 30, 41, 55);
+        botColor = pressed ? Color(255, 15, 20, 28) : Color(255, 20, 28, 38);
+        borderColor = Color(255, 71, 85, 105);
+        textColor = Color(255, 226, 232, 240);
+    }
+
+    LinearGradientBrush br(RectF(0, 0, w, h), topColor, botColor, LinearGradientModeVertical);
+    g.FillPath(&br, &btnPath);
+
+    Pen borderPen(borderColor, 1.2f);
+    g.DrawPath(&borderPen, &btnPath);
+
+    wchar_t btnText[128] = { 0 };
+    GetWindowTextW(dis->hwndItem, btnText, 128);
+
+    Gdiplus::Font font(L"Segoe UI", (ctlId == IDC_BTN_SAVE) ? 10.5f : 9.0f, (ctlId == IDC_BTN_SAVE) ? FontStyleBold : FontStyleBold, UnitPoint);
+    SolidBrush textBr(textColor);
+    StringFormat sf;
+    sf.SetAlignment(StringAlignmentCenter);
+    sf.SetLineAlignment(StringAlignmentCenter);
+    g.DrawString(btnText, -1, &font, RectF(0, 0, w, h), &sf, &textBr);
 }
 
 void SettingsWindow::Show(bool show) {
@@ -511,6 +620,87 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
         return 0;
     }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        Graphics g(hdc);
+        g.SetSmoothingMode(SmoothingModeAntiAlias);
+        g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+
+        RECT clientRc;
+        GetClientRect(hwnd, &clientRc);
+        float cw = (float)(clientRc.right - clientRc.left);
+
+        // 1. Header Banner (0 to 72px)
+        LinearGradientBrush headerBr(RectF(0, 0, cw, 72.0f), Color(255, 18, 25, 35), Color(255, 12, 16, 23), LinearGradientModeVertical);
+        g.FillRectangle(&headerBr, 0.0f, 0.0f, cw, 72.0f);
+
+        // Neon Accent Stripe
+        Pen stripePen(Color(255, 16, 185, 129), 2.0f);
+        g.DrawLine(&stripePen, 0.0f, 72.0f, cw, 72.0f);
+
+        // Header Title
+        Gdiplus::Font titleFont(L"Segoe UI", 13.0f, FontStyleBold, UnitPoint);
+        SolidBrush titleBrush(Color(255, 248, 250, 252));
+        g.DrawString(L"🐷 BAD PIGGIES — AI COMPANION 2026", -1, &titleFont, PointF(22.0f, 14.0f), &titleBrush);
+
+        // Subtitle with badges
+        Gdiplus::Font subFont(L"Segoe UI", 9.0f, FontStyleRegular, UnitPoint);
+        SolidBrush subBrush(Color(255, 16, 185, 129));
+        g.DrawString(L"🎤 Vosk Offline Voice Engine  •  🔥 TikTok Meme Edition  •  🎮 Dota 2 GSI", -1, &subFont, PointF(24.0f, 42.0f), &subBrush);
+
+        // 2. Card Backgrounds
+        // Card 1: Pig & Preview (20, 84, 590, 175)
+        GraphicsPath c1;
+        AddRoundedRect(c1, RectF(20.0f, 84.0f, cw - 40.0f, 175.0f), 10.0f);
+        SolidBrush cardBr(Color(255, 20, 27, 37));
+        g.FillPath(&cardBr, &c1);
+        Pen borderPen(Color(180, 35, 47, 63), 1.0f);
+        g.DrawPath(&borderPen, &c1);
+
+        // Card 2: Voice & Memes (20, 270, 318, 365)
+        GraphicsPath c2;
+        AddRoundedRect(c2, RectF(20.0f, 270.0f, 320.0f, 365.0f), 10.0f);
+        g.FillPath(&cardBr, &c2);
+        g.DrawPath(&borderPen, &c2);
+
+        // Card 3: Interactive Testing (350, 270, 260, 365)
+        GraphicsPath c3;
+        AddRoundedRect(c3, RectF(350.0f, 270.0f, cw - 370.0f, 365.0f), 10.0f);
+        g.FillPath(&cardBr, &c3);
+        g.DrawPath(&borderPen, &c3);
+
+        // Section Headers
+        Gdiplus::Font secFont(L"Segoe UI", 8.5f, FontStyleBold, UnitPoint);
+        SolidBrush secBrush(Color(255, 148, 163, 184));
+        g.DrawString(L"👑 ВЫБОР СВИНКИ И ПРЕВЬЮ", -1, &secFont, PointF(32.0f, 90.0f), &secBrush);
+        g.DrawString(L"🎤 VOSK ОФЛАЙН ПОМОЩНИК И ОПЦИИ", -1, &secFont, PointF(32.0f, 276.0f), &secBrush);
+        g.DrawString(L"⚡ БЫСТРЫЙ ТЕСТ И МЕМЫ", -1, &secFont, PointF(362.0f, 276.0f), &secBrush);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdcStatic = (HDC)wParam;
+        SetTextColor(hdcStatic, RGB(226, 232, 240));
+        SetBkMode(hdcStatic, TRANSPARENT);
+        if (self && self->hBrCard_) return (LRESULT)self->hBrCard_;
+        return (LRESULT)GetStockObject(NULL_BRUSH);
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdcEdit = (HDC)wParam;
+        SetTextColor(hdcEdit, RGB(248, 250, 252));
+        SetBkColor(hdcEdit, RGB(26, 35, 47));
+        if (self && self->hBrEdit_) return (LRESULT)self->hBrEdit_;
+        return (LRESULT)GetStockObject(BLACK_BRUSH);
+    }
+    case WM_CTLCOLORBTN: {
+        HDC hdcBtn = (HDC)wParam;
+        SetTextColor(hdcBtn, RGB(226, 232, 240));
+        SetBkMode(hdcBtn, TRANSPARENT);
+        if (self && self->hBrCard_) return (LRESULT)self->hBrCard_;
+        return (LRESULT)GetStockObject(NULL_BRUSH);
+    }
     case WM_COMMAND: {
         int id = LOWORD(wParam);
         int code = HIWORD(wParam);
@@ -521,7 +711,7 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         else if (id == IDC_BTN_SAVE) {
             if (self) {
                 self->ApplySettings();
-                MessageBoxW(hwnd, L"Настройки успешно сохранены!", L"Bad Piggies Widget", MB_OK | MB_ICONINFORMATION);
+                MessageBoxW(hwnd, L"Настройки успешно сохранены и применены!", L"Bad Piggies Widget", MB_OK | MB_ICONINFORMATION);
             }
         }
         else if (id == IDC_BTN_TEST_KILL) {
@@ -539,6 +729,19 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             OverlayWindow::Instance().Show(true);
             OverlayWindow::Instance().TriggerLowHp(testLowHp, 15);
         }
+        else if (id == IDC_BTN_TEST_ADVISOR) {
+            VoiceAssistant::Instance().AskAdvice(0);
+        }
+        else if (id == IDC_BTN_TEST_MEME) {
+            VoiceAssistant::Instance().TriggerMeme();
+        }
+        else if (id == IDC_BTN_TEST_PLAYLIST) {
+            AiBrain::Instance().OpenMusicPlaylist();
+            std::wstring serviceRu = AiMemory::Instance().GetMusicServiceNameRu();
+            std::wstring reply = L"Включаю твой плейлист в " + serviceRu + L"! Свин всё помнит и готов тащить.";
+            OverlayWindow::Instance().TriggerAdvice(reply);
+            SettingsWindow::Instance().SetLastAnswerText(reply);
+        }
         else if (id == IDC_CHK_USE_NAME) {
             if (self) {
                 bool chk = (SendMessageW(self->chkUseName_, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -550,9 +753,6 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
                 bool chk = (SendMessageW(self->chkVoiceAssistant_, BM_GETCHECK, 0, 0) == BST_CHECKED);
                 EnableWindow(self->txtWakeWord_, chk ? TRUE : FALSE);
             }
-        }
-        else if (id == IDC_BTN_TEST_ADVISOR) {
-            VoiceAssistant::Instance().AskAdvice(0);
         }
         else if (id == IDC_BTN_CHECK_UPDATE) {
             Updater::Instance().CheckForUpdatesAsync(false, hwnd);
@@ -570,10 +770,20 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             self->DrawPreview(dis->hDC, dis->rcItem);
             return TRUE;
         }
+        if (self && (dis->CtlType == ODT_BUTTON)) {
+            self->DrawOwnerButton(dis);
+            return TRUE;
+        }
+        break;
+    }
+    case WM_SHOWWINDOW: {
+        if (wParam && self) {
+            self->LoadCurrentSettingsToUI();
+            InvalidateRect(hwnd, NULL, TRUE);
+        }
         break;
     }
     case WM_CLOSE: {
-        // Just hide to tray rather than exiting app
         if (self) self->Show(false);
         return 0;
     }

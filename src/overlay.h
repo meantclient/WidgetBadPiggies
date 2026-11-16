@@ -6,7 +6,8 @@ enum class PigAnimationState {
     JUMP_KILL,
     SAD_DEATH,
     PANIC_LOW_HP,
-    LOTUS_REMINDER
+    LOTUS_REMINDER,
+    VOICE_ADVICE
 };
 
 class OverlayWindow {

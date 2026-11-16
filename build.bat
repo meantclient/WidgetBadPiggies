@@ -1,12 +1,16 @@
 @echo off
 setlocal
-set "PATH=C:\Windows\System32;C:\Windows;%PATH%"
+set "SystemRoot=C:\Windows"
+set "ComSpec=C:\Windows\System32\cmd.exe"
+set "PATH=C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem"
 taskkill /f /im BadPiggiesDotaWidget.exe 2>nul
 echo ========================================================
 echo   Building Bad Piggies Dota 2 Widget (C++)
 echo ========================================================
 
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+del app.res 2>nul
+del *.obj 2>nul
 
 set "WindowsSdkDir=C:\Program Files (x86)\Windows Kits\10\"
 set "WindowsSDKVersion=10.0.26100.0\"
@@ -16,12 +20,12 @@ set "LIB=%LIB%;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\ucrt\x64;
 
 echo.
 echo Compiling resources...
-rc.exe /nologo /fo app.res src\app.rc
+"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\rc.exe" /nologo /fo app.res /i src src\app.rc
 
 echo.
 echo Compiling source files with UTF-8 support and embedded icon...
 cl.exe /nologo /O2 /W3 /std:c++17 /EHsc /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /Iinclude /Isrc ^
-    src\main.cpp src\config.cpp src\dota_gsi.cpp src\overlay.cpp src\vignette.cpp src\settings_gui.cpp src\dota_settings_gui.cpp src\dota_welcome.cpp src\hero_advisor.cpp src\voice_assistant.cpp src\voice.cpp src\updater.cpp src\tray.cpp ^
+    src\main.cpp src\config.cpp src\dota_gsi.cpp src\overlay.cpp src\vignette.cpp src\settings_gui.cpp src\dota_settings_gui.cpp src\dota_welcome.cpp src\hero_advisor.cpp src\vosk_engine.cpp src\voice_assistant.cpp src\voice.cpp src\updater.cpp src\tray.cpp src\ai_brain.cpp ^
     app.res ^
     /link /OUT:BadPiggiesDotaWidget.exe ^
     user32.lib gdi32.lib gdiplus.lib ws2_32.lib shell32.lib advapi32.lib shlwapi.lib winmm.lib comctl32.lib uxtheme.lib ole32.lib urlmon.lib wininet.lib ^

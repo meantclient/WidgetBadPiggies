@@ -276,32 +276,8 @@ void OverlayWindow::TriggerKill(int kills, int streak) {
     }
     lastKillTick = now;
 
-    if (ConfigManager::Get().enableToxicMode) {
-        bubbleText_ = HeroAdvisor::Instance().GetKillComment(std::max(streak, multiKills));
-    } else if (multiKills >= 5 || streak >= 5) {
-        bubbleText_ = L"РАМПАГА!";
-    } else if (multiKills == 4) {
-        bubbleText_ = L"УЛЬТРА КИЛЛ!";
-    } else if (multiKills == 3) {
-        bubbleText_ = L"ТРИПЛ КИЛЛ!";
-    } else if (multiKills == 2) {
-        bubbleText_ = L"ДАБЛ КИЛЛ!";
-    } else if (streak >= 3) {
-        int idx = rand() % streakPhrases_.size();
-        bubbleText_ = streakPhrases_[idx];
-    } else {
-        // Pick either the special "Красава, {Name}!" phrase OR one of the other kill phrases
-        int r = rand() % (killPhrases_.size() + 1);
-        if (r == 0) {
-            if (ConfigManager::Get().usePlayerName && !ConfigManager::Get().playerName.empty()) {
-                bubbleText_ = L"Красава, " + ConfigManager::Get().playerName + L"!";
-            } else {
-                bubbleText_ = L"Красава!";
-            }
-        } else {
-            bubbleText_ = killPhrases_[r - 1];
-        }
-    }
+    // Get diverse, hype kill / streak / multikill reaction from HeroAdvisor
+    bubbleText_ = HeroAdvisor::Instance().GetKillComment(std::max(streak, multiKills));
 
     PlayAudio(L"kill.wav");
     VoiceService::Instance().Speak(bubbleText_);
@@ -365,10 +341,23 @@ void OverlayWindow::TriggerLotus(bool isTurbo) {
 }
 
 void OverlayWindow::TriggerAdvice(const std::wstring& advice) {
-    state_ = PigAnimationState::JUMP_KILL;
+    FILE* fLog = _wfopen(L"voice_debug.log", L"a, ccs=UTF-8");
+    if (fLog) {
+        fwprintf(fLog, L"[OVERLAY TRIGGER] '%s'\n", advice.c_str());
+        fclose(fLog);
+    }
+    Show(true);
+    state_ = PigAnimationState::VOICE_ADVICE;
     animTimer_ = 0.0;
-    stateDuration_ = 6.5;
+    double dur = 5.5 + (advice.length() * 0.08);
+    if (dur > 18.0) dur = 18.0;
+    stateDuration_ = dur;
     bubbleText_ = advice;
+
+    if (hwnd_) {
+        SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+    Render();
 
     PlayAudio(L"lotus.wav");
     VoiceService::Instance().Speak(advice);
@@ -640,6 +629,20 @@ void OverlayWindow::Render() {
             bubbleAlpha = 1.0f;
         }
     }
+    else if (state_ == PigAnimationState::VOICE_ADVICE) {
+        // Cute expressive talking animation: pig bobs and bounces lightly while talking
+        offsetY = (float)(-fabs(sin(animTimer_ * 6.0)) * 12.0);
+        scaleX = 1.0f + (float)(sin(animTimer_ * 12.0) * 0.04);
+        scaleY = 1.0f - (float)(sin(animTimer_ * 12.0) * 0.04);
+
+        if (animTimer_ < 0.25) {
+            bubbleAlpha = (float)(animTimer_ / 0.25);
+        } else if (animTimer_ > stateDuration_ - 0.5) {
+            bubbleAlpha = (float)((stateDuration_ - animTimer_) / 0.5);
+        } else {
+            bubbleAlpha = 1.0f;
+        }
+    }
     else if (state_ == PigAnimationState::LOTUS_REMINDER) {
         double bounce = fabs(sin(animTimer_ * 6.0));
         offsetY = (float)(-bounce * 45.0);
@@ -783,7 +786,7 @@ void OverlayWindow::Render() {
             g.DrawImage(pDrawPig, RectF(pigX, pigY, drawW, drawH));
         }
 
-        // Draw dynamic auto-sizing speech bubble (Image 2 fix)
+        // Draw dynamic auto-sizing custom styled speech bubble (Cyber-Emerald / Meme 2026 Edition)
         if (bubbleAlpha > 0.01f && !bubbleText_.empty()) {
             BYTE a = (BYTE)(bubbleAlpha * 255.0f);
 
@@ -799,36 +802,98 @@ void OverlayWindow::Render() {
             sf.SetAlignment(StringAlignmentCenter);
             sf.SetLineAlignment(StringAlignmentCenter);
 
-            float maxTextW = (float)winWidth_ - 36.0f;
+            float maxTextW = (float)winWidth_ - 40.0f;
             RectF layoutRect(0, 0, maxTextW, 800.0f);
             RectF measuredRect;
             g.MeasureString(bubbleText_.c_str(), -1, pFont.get(), layoutRect, &sf, &measuredRect);
 
-            float bw = std::max(180.0f, std::min((float)winWidth_ - 24.0f, measuredRect.Width + 34.0f));
-            float bh = std::max(56.0f, measuredRect.Height + 24.0f);
+            float bw = std::max(190.0f, std::min((float)winWidth_ - 20.0f, measuredRect.Width + 36.0f));
+            float bh = std::max(64.0f, measuredRect.Height + 36.0f);
             float bx = (winWidth_ - bw) / 2.0f;
             float by = pigY - bh - 16.0f;
-            if (by < 6.0f) by = 6.0f; // Clamp inside canvas, never cut off!
+            if (by < 6.0f) by = 6.0f; // Clamp inside canvas
+
+            // 1. Multi-layer soft drop shadow
+            GraphicsPath shadowPath;
+            AddRoundedRect(shadowPath, RectF(bx - 1.0f, by + 4.0f, bw + 2.0f, bh + 2.0f), 18.0f);
+            SolidBrush shadowBrush(Color((BYTE)(a * 0.40f), 0, 0, 0));
+            g.FillPath(&shadowBrush, &shadowPath);
 
             GraphicsPath bubblePath;
             AddRoundedRect(bubblePath, RectF(bx, by, bw, bh), 16.0f);
 
-            // Tail pointing down to pig head
+            // Tail pointing down towards pig head
             PointF tailPts[] = {
-                PointF(bx + bw * 0.5f - 10.0f, by + bh - 1.0f),
+                PointF(bx + bw * 0.5f - 11.0f, by + bh - 1.0f),
                 PointF(bx + bw * 0.5f, by + bh + 14.0f),
-                PointF(bx + bw * 0.5f + 10.0f, by + bh - 1.0f)
+                PointF(bx + bw * 0.5f + 11.0f, by + bh - 1.0f)
             };
             bubblePath.AddPolygon(tailPts, 3);
 
-            SolidBrush fillBrush(Color(a, 255, 255, 255));
-            g.FillPath(&fillBrush, &bubblePath);
+            // 2. Translucent Cyber-Glass Background
+            bool isPanic = (state_ == PigAnimationState::PANIC_LOW_HP);
+            Color topBg = isPanic ? Color((BYTE)(a * 0.95f), 35, 15, 20) : Color((BYTE)(a * 0.95f), 17, 24, 32);
+            Color botBg = isPanic ? Color((BYTE)(a * 0.97f), 20, 8, 12)  : Color((BYTE)(a * 0.97f), 10, 14, 20);
+            LinearGradientBrush glassBrush(RectF(bx, by, bw, bh + 14.0f), topBg, botBg, LinearGradientModeVertical);
+            g.FillPath(&glassBrush, &bubblePath);
 
-            Pen borderPen(Color(a, 35, 35, 35), 2.5f);
+            // 3. Glowing Neon Accent Border
+            Color neonColor = isPanic ? Color(a, 244, 63, 94) : Color(a, 16, 185, 129);
+            Pen borderPen(neonColor, isPanic ? 2.2f : 1.8f);
             g.DrawPath(&borderPen, &bubblePath);
 
-            SolidBrush textBrush(Color(a, 20, 20, 20));
-            RectF textRect(bx + 8.0f, by + 6.0f, bw - 16.0f, bh - 12.0f);
+            // 4. Header Pill Badge
+            const wchar_t* badgeTitle = isPanic ? L"🩸 ОПАСНО • МАЛО ХП" : L"🐷 PIGGY AI • 2026";
+            if (!isPanic && (bubbleText_.find(L"хомяк") != std::wstring::npos ||
+                bubbleText_.find(L"шоколад") != std::wstring::npos ||
+                bubbleText_.find(L"чилл") != std::wstring::npos ||
+                bubbleText_.find(L"скибиди") != std::wstring::npos ||
+                bubbleText_.find(L"сигма") != std::wstring::npos ||
+                bubbleText_.find(L"чиназес") != std::wstring::npos ||
+                bubbleText_.find(L"босс") != std::wstring::npos ||
+                bubbleText_.find(L"кефтеме") != std::wstring::npos ||
+                bubbleText_.find(L"гойда") != std::wstring::npos)) {
+                badgeTitle = L"🔥 TIKTOK 2026 MEME";
+            } else if (state_ == PigAnimationState::VOICE_ADVICE) {
+                badgeTitle = L"💬 СВИН ОТВЕЧАЕТ";
+            } else if (state_ == PigAnimationState::JUMP_KILL) {
+                badgeTitle = L"🎯 DOTA 2 KILL!";
+            } else if (state_ == PigAnimationState::LOTUS_REMINDER) {
+                badgeTitle = L"🌸 ЛОТУС В ПРУДУ";
+            }
+
+            float badgeW = 110.0f;
+            if (isPanic) badgeW = 126.0f;
+            else if (wcscmp(badgeTitle, L"🔥 TIKTOK 2026 MEME") == 0) badgeW = 138.0f;
+            else if (state_ == PigAnimationState::VOICE_ADVICE) badgeW = 124.0f;
+            else if (state_ == PigAnimationState::JUMP_KILL) badgeW = 116.0f;
+            float badgeH = 17.0f;
+            float badgeX = bx + (bw - badgeW) * 0.5f;
+            float badgeY = by + 6.0f;
+            GraphicsPath badgePath;
+            AddRoundedRect(badgePath, RectF(badgeX, badgeY, badgeW, badgeH), 5.0f);
+
+            Color badgeBgColor = isPanic ? Color((BYTE)(a * 0.35f), 244, 63, 94) : Color((BYTE)(a * 0.30f), 16, 185, 129);
+            SolidBrush badgeBg(badgeBgColor);
+            g.FillPath(&badgeBg, &badgePath);
+
+            Pen badgeBorder(Color((BYTE)(a * 0.8f), isPanic ? 244 : 16, isPanic ? 63 : 185, isPanic ? 94 : 129), 1.0f);
+            g.DrawPath(&badgeBorder, &badgePath);
+
+            Gdiplus::Font badgeFont(L"Segoe UI", 7.5f, FontStyleBold, UnitPoint);
+            SolidBrush badgeTextBrush(Color(a, isPanic ? 255 : 200, isPanic ? 200 : 255, isPanic ? 210 : 220));
+            StringFormat bsf;
+            bsf.SetAlignment(StringAlignmentCenter);
+            bsf.SetLineAlignment(StringAlignmentCenter);
+            g.DrawString(badgeTitle, -1, &badgeFont, RectF(badgeX, badgeY, badgeW, badgeH), &bsf, &badgeTextBrush);
+
+            // 5. Speech text with crisp drop shadow
+            RectF textShadowRect(bx + 11.0f, by + 26.0f, bw - 20.0f, bh - 30.0f);
+            SolidBrush shadowTextBrush(Color((BYTE)(a * 0.85f), 0, 0, 0));
+            g.DrawString(bubbleText_.c_str(), -1, pFont.get(), textShadowRect, &sf, &shadowTextBrush);
+
+            RectF textRect(bx + 10.0f, by + 25.0f, bw - 20.0f, bh - 30.0f);
+            SolidBrush textBrush(Color(a, 248, 250, 252));
             g.DrawString(bubbleText_.c_str(), -1, pFont.get(), textRect, &sf, &textBrush);
         }
     }

@@ -105,6 +105,11 @@ void VoiceService::ApplyVoiceSettings() {
 }
 
 void VoiceService::Speak(const std::wstring& text) {
+    FILE* fLog = _wfopen(L"voice_debug.log", L"a, ccs=UTF-8");
+    if (fLog) {
+        fwprintf(fLog, L"[VOICE SPEAK] '%s' (enabled=%d)\n", text.c_str(), ConfigManager::Get().enableVoiceTTS);
+        fclose(fLog);
+    }
     if (!ConfigManager::Get().enableVoiceTTS) return;
     if (!initialized_) Init();
     if (pVoice_) {
@@ -112,7 +117,12 @@ void VoiceService::Speak(const std::wstring& text) {
         if (currentGender_ != ConfigManager::Get().voiceGender) {
             ApplyVoiceSettings();
         }
-        pVoice_->Speak(text.c_str(), SPF_ASYNC | SPF_PURGEBEFORESPEAK, NULL);
+        HRESULT hrSpeak = pVoice_->Speak(text.c_str(), SPF_ASYNC | SPF_PURGEBEFORESPEAK, NULL);
+        FILE* fLogRes = _wfopen(L"voice_debug.log", L"a, ccs=UTF-8");
+        if (fLogRes) {
+            fwprintf(fLogRes, L"[VOICE SPEAK RESULT] hr=0x%08X\n", (unsigned int)hrSpeak);
+            fclose(fLogRes);
+        }
     }
 }
 

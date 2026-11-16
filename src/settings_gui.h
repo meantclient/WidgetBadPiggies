@@ -9,6 +9,8 @@ public:
     void Show(bool show);
     bool IsVisible() const { return visible_; }
     void UpdateDotaStatus(bool isRunning);
+    void SetLastRecognizedText(const std::wstring& text);
+    void SetLastAnswerText(const std::wstring& answer);
 
     HWND GetHwnd() const { return hwnd_; }
 
@@ -48,14 +50,24 @@ private:
     HWND btnTestDeath_ = NULL;
     HWND btnTestLowHp_ = NULL;
     HWND btnTestAdvisor_ = NULL;
+    HWND btnTestMeme_ = NULL;
+    HWND btnTestPlaylist_ = NULL;
     HWND btnSetupDota_ = NULL;
     HWND btnCheckUpdate_ = NULL;
     HWND btnSave_ = NULL;
     HWND lblStatus_ = NULL;
     HWND previewBox_ = NULL;
 
+    HFONT hFontTitle_ = NULL;
     HFONT hFont_ = NULL;
     HFONT hFontBold_ = NULL;
+    HFONT hFontSmall_ = NULL;
+
+    HBRUSH hBrBkg_ = NULL;
+    HBRUSH hBrCard_ = NULL;
+    HBRUSH hBrEdit_ = NULL;
+
+    void DrawOwnerButton(DRAWITEMSTRUCT* dis);
 
     std::unique_ptr<Gdiplus::Image> previewImage_;
     int previewPigType_ = 1;

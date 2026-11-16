@@ -21,14 +21,14 @@ echo.
 echo Compiling BadPiggiesSetup.exe...
 cl.exe /nologo /O2 /W3 /std:c++17 /EHsc /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
     installer\installer_main.cpp installer_res.obj ^
-    /link /OUT:"C:\Users\Максим\Desktop\BadPiggiesSetup.exe" ^
+    /link /OUT:"%CD%\BadPiggiesSetup.exe" ^
     user32.lib gdi32.lib shell32.lib advapi32.lib shlwapi.lib ole32.lib ^
     /SUBSYSTEM:WINDOWS
 
 if %ERRORLEVEL% EQU 0 (
     echo.
     echo ========================================================
-    echo   INSTALLER CREATED: C:\Users\Максим\Desktop\BadPiggiesSetup.exe
+    echo   INSTALLER CREATED: %CD%\BadPiggiesSetup.exe
     echo ========================================================
     del *.obj 2>nul
     del installer.res 2>nul

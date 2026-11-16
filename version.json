@@ -1,5 +1,5 @@
 {
-  "version": "3.0",
-  "download_url": "https://raw.githubusercontent.com/meantclient/WidgetBadPiggies/main/BadPiggiesSetup.exe",
-  "changelog": "Grand Update v3.0: Dynamic Island at top edge, 12000+ non-repeating jokes, mic selection, 3D shadow, auto-sized bubbles, smooth dragging, voice deduplication"
+  "version": "4.0",
+  "download_url": "https://github.com/meantclient/WidgetBadPiggies/releases/download/v4.0/BadPiggiesSetup.exe",
+  "changelog": "Большое обновление: голосовой помощник на Vosk, улучшения интерфейса и новые игровые советы."
 }

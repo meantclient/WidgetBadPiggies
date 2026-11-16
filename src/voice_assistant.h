@@ -3,6 +3,8 @@
 #include <string>
 #include <atomic>
 #include <thread>
+#include <vector>
+#include <chrono>
 #include <sapi.h>
 
 class VoiceAssistant {
@@ -16,22 +18,27 @@ public:
     static std::vector<std::pair<std::wstring, std::wstring>> GetAvailableMicrophones();
 
     // Trigger advice programmatically (e.g. from hotkey or UI button)
-    void AskAdvice(int queryType = 0); // 0 = Buy, 1 = Skill, 2 = General
+    void AskAdvice(int queryType = 0); // 0 = Buy, 1 = Skill, 2 = General, 3 = Random Meme
+    void TriggerMeme(const std::wstring& memeType = L"");
 
     bool IsRunning() const { return running_.load(); }
     bool IsAwake() const;
+    bool IsUsingVosk() const { return usingVosk_.load(); }
+
+    void ProcessRecognizedText(const std::wstring& text, bool isFinal = true);
 
 private:
     VoiceAssistant();
     ~VoiceAssistant();
 
-    void ListeningThread();
-    void ProcessRecognizedText(const std::wstring& text);
+    void SapiListeningThread();
 
     std::atomic<bool> running_{ false };
-    std::thread listenThread_;
+    std::atomic<bool> usingVosk_{ false };
+    std::thread sapiThread_;
     std::chrono::steady_clock::time_point awakeUntil_{};
 
+    // SAPI fallback
     ISpRecoContext* pRecoCtx_ = NULL;
     ISpRecoGrammar* pGrammar_ = NULL;
     ISpRecognizer* pInprocRec_ = NULL;

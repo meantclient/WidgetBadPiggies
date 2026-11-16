@@ -4,17 +4,21 @@ import subprocess
 import zipfile
 import shutil
 
-BASE_DIR = r"c:\Users\Максим\Desktop\WidgetBadPiges"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PAYLOAD_BIN = os.path.join(BASE_DIR, "payload.bin")
-DESKTOP_EXE = r"C:\Users\Максим\Desktop\BadPiggiesSetup.exe"
-DESKTOP_ZIP_SETUP = r"C:\Users\Максим\Desktop\BadPiggiesSetup.zip"
-DESKTOP_ZIP_PORTABLE = r"C:\Users\Максим\Desktop\BadPiggiesWidget.zip"
+DESKTOP_EXE = os.path.join(BASE_DIR, "BadPiggiesSetup.exe")
+DESKTOP_ZIP_SETUP = os.path.join(BASE_DIR, "BadPiggiesSetup.zip")
+DESKTOP_ZIP_PORTABLE = os.path.join(BASE_DIR, "BadPiggiesWidget.zip")
 
 files_to_pack = [
     "BadPiggiesDotaWidget.exe",
     "config.ini",
     "StartWidget.bat",
     "ИНСТРУКЦИЯ_ДЛЯ_ДРУЗЕЙ.txt",
+    "libvosk.dll",
+    "libgcc_s_seh-1.dll",
+    "libstdc++-6.dll",
+    "libwinpthread-1.dll",
 ]
 
 all_entries = []
@@ -30,6 +34,14 @@ for root, dirs, files in os.walk(assets_dir):
         full_p = os.path.join(root, f)
         rel_p = os.path.relpath(full_p, BASE_DIR)
         all_entries.append((full_p, rel_p))
+
+model_dir = os.path.join(BASE_DIR, "model")
+if os.path.exists(model_dir):
+    for root, dirs, files in os.walk(model_dir):
+        for f in files:
+            full_p = os.path.join(root, f)
+            rel_p = os.path.relpath(full_p, BASE_DIR)
+            all_entries.append((full_p, rel_p))
 
 print(f"Total files to bundle: {len(all_entries)}")
 
